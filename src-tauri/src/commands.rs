@@ -2,7 +2,7 @@ use tauri::State;
 use crate::db::{Database,Employee};
 use argon2::{Argon2,PasswordHash,PasswordHasher,PasswordVerifier};
 use argon2::password_hash::SaltString;
-use rand_core::OsRng;
+use rand::rngs::OsRng;
 #[derive(serde::Deserialize)] pub struct LoginRequest{pub username:String,pub password:String}
 #[derive(serde::Serialize)] pub struct LoginResponse{pub id:String,pub username:String,pub role:String,pub employee_id:Option<String>,pub must_change_password:bool}
 #[derive(serde::Deserialize)] pub struct ChangePasswordRequest{pub username:String,pub new_password:String}
