@@ -7,7 +7,12 @@ pub struct SalaryRecord { pub id:String, pub employee_id:String, pub pay_period:
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PayrollPeriod { pub id:String, pub period:String, pub status:String, pub processed_at:Option<String>, pub processed_by:Option<String> }
 
-fn valid_period(p:&str)->bool{let b=p.as_bytes();b.len()==7&&b[4]==b'-'&&b[..4].iter().all(u8::is_ascii_digit)&&b[5..].iter().all(u8::is_ascii_digit)&&(&b[5..7] as &[u8])!=b"00"&&(&b[5..7] as &[u8])<=b"12"}
+fn valid_period(p:&str)->bool {
+    let b=p.as_bytes();
+    if b.len()!=7 || b[4]!=b'-' || !b[..4].iter().all(u8::is_ascii_digit) || !b[5..7].iter().all(u8::is_ascii_digit) { return false; }
+    let month=(b[5]-b'0')*10+(b[6]-b'0');
+    month>=1 && month<=12
+}
 fn validate_salary(s:&SalaryRecord)->Result<(),rusqlite::Error>{if s.employee_id.trim().is_empty(){return Err(rusqlite::Error::InvalidParameterName("employee is required".into()))}if !valid_period(&s.pay_period){return Err(rusqlite::Error::InvalidParameterName("pay period must be YYYY-MM".into()))}if !s.base_salary.is_finite()||!s.allowances.is_finite()||!s.deductions.is_finite(){return Err(rusqlite::Error::InvalidParameterName("salary values must be finite".into()))}if s.base_salary<0.0||s.allowances<0.0||s.deductions<0.0{return Err(rusqlite::Error::InvalidParameterName("salary values cannot be negative".into()))}if s.deductions>s.base_salary+s.allowances{return Err(rusqlite::Error::InvalidParameterName("deductions cannot exceed gross salary".into()))}Ok(())}
 
 pub fn migrate(c:&Connection)->Result<(),rusqlite::Error>{c.execute_batch("CREATE TABLE IF NOT EXISTS salary_records(id TEXT PRIMARY KEY,employee_id TEXT NOT NULL REFERENCES employees(id),pay_period TEXT NOT NULL,base_salary REAL NOT NULL DEFAULT 0,allowances REAL NOT NULL DEFAULT 0,deductions REAL NOT NULL DEFAULT 0,net_salary REAL NOT NULL DEFAULT 0,status TEXT NOT NULL DEFAULT 'draft',created_at TEXT NOT NULL,updated_at TEXT NOT NULL,UNIQUE(employee_id,pay_period)); CREATE TABLE IF NOT EXISTS payroll_periods(id TEXT PRIMARY KEY,period TEXT NOT NULL UNIQUE,status TEXT NOT NULL DEFAULT 'draft',processed_at TEXT,processed_by TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL); CREATE INDEX IF NOT EXISTS idx_salary_period ON salary_records(pay_period); CREATE INDEX IF NOT EXISTS idx_salary_employee ON salary_records(employee_id);")}
