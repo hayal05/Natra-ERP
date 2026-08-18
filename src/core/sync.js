@@ -1,29 +1,9 @@
-/** Sync queue contract for the future Turso adapter.
- * Mutations are recorded locally first. When an authenticated cloud adapter is
- * supplied, pending operations can be uploaded and acknowledged safely.
- */
+/** Offline-first sync queue plus native Turso sync orchestration. */
 import { storage } from './storage.js';
-
-const KEY = 'sync-queue';
-
-export const syncQueue = {
-  list() { return storage.read(KEY, []); },
-  enqueue(operation) {
-    const queue = this.list();
-    queue.push({ id: crypto.randomUUID(), createdAt: new Date().toISOString(), attempts: 0, ...operation });
-    storage.write(KEY, queue);
-  },
-  remove(id) { storage.write(KEY, this.list().filter(item => item.id !== id)); },
-  clear() { storage.write(KEY, []); },
-  pendingCount() { return this.list().length; }
-};
-
-export async function flushSyncQueue(adapter) {
-  if (!adapter?.apply) return { synced: 0, pending: syncQueue.pendingCount() };
-  let synced = 0;
-  for (const operation of syncQueue.list()) {
-    try { await adapter.apply(operation); syncQueue.remove(operation.id); synced++; }
-    catch { break; }
-  }
-  return { synced, pending: syncQueue.pendingCount() };
-}
+import { setSyncStatus, SYNC_STATUS } from './sync-status.js';
+const KEY='sync-queue';
+const invoke=globalThis.__TAURI__?.core?.invoke;
+export const syncQueue={list(){return storage.read(KEY,[])},enqueue(operation){const q=this.list();q.push({id:crypto.randomUUID(),createdAt:new Date().toISOString(),attempts:0,...operation});storage.write(KEY,q)},remove(id){storage.write(KEY,this.list().filter(x=>x.id!==id))},clear(){storage.write(KEY,[])},pendingCount(){return this.list().length}};
+export async function syncNow(){if(!invoke){setSyncStatus({state:SYNC_STATUS.OFFLINE,pending:syncQueue.pendingCount()});return null}setSyncStatus({state:SYNC_STATUS.SYNCING,pending:syncQueue.pendingCount(),lastError:null});try{const result=await invoke('sync_now');setSyncStatus({state:SYNC_STATUS.CONNECTED,pending:result?.pending??0,lastSync:new Date().toISOString(),lastError:null});return result}catch(e){let pending=syncQueue.pendingCount();try{const s=await invoke('sync_status');pending=s?.pending??pending}catch{}setSyncStatus({state:SYNC_STATUS.ERROR,pending,lastError:String(e)});return null}}
+export function startAutoSync(intervalMs=30000){if(typeof window==='undefined')return()=>{};const run=()=>{if(navigator.onLine!==false)syncNow();else setSyncStatus({state:SYNC_STATUS.OFFLINE,pending:syncQueue.pendingCount()})};window.addEventListener('online',run);window.addEventListener('offline',()=>setSyncStatus({state:SYNC_STATUS.OFFLINE,pending:syncQueue.pendingCount()}));run();const timer=setInterval(run,intervalMs);return()=>{clearInterval(timer);window.removeEventListener('online',run)}}
+export async function flushSyncQueue(adapter){if(!adapter?.apply)return{synced:0,pending:syncQueue.pendingCount()};let synced=0;for(const operation of syncQueue.list()){try{await adapter.apply(operation);syncQueue.remove(operation.id);synced++}catch{break}}return{synced,pending:syncQueue.pendingCount()}}
