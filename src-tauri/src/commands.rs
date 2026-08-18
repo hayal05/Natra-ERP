@@ -1,8 +1,11 @@
 use tauri::State;
 use crate::db::{Database,Employee};
-use argon2::{Argon2,PasswordHash,PasswordVerifier};
+use argon2::{Argon2,PasswordHash,PasswordHasher,PasswordVerifier};
+use argon2::password_hash::SaltString;
+use rand_core::OsRng;
 #[derive(serde::Deserialize)] pub struct LoginRequest{pub username:String,pub password:String}
-#[derive(serde::Serialize)] pub struct LoginResponse{pub id:String,pub username:String,pub role:String,pub employee_id:Option<String>}
+#[derive(serde::Serialize)] pub struct LoginResponse{pub id:String,pub username:String,pub role:String,pub employee_id:Option<String>,pub must_change_password:bool}
+#[derive(serde::Deserialize)] pub struct ChangePasswordRequest{pub username:String,pub new_password:String}
 #[derive(serde::Deserialize)] pub struct TursoSaveRequest{pub database_url:String,pub auth_token:String}
 #[derive(serde::Deserialize)] pub struct CreateUserRequest{pub id:String,pub username:String,pub password_hash:String,pub role:String,pub employee_id:Option<String>}
 #[derive(serde::Deserialize)] pub struct UpdateUserRequest{pub id:String,pub username:String,pub role:String,pub employee_id:Option<String>,pub active:bool}
@@ -12,7 +15,8 @@ use argon2::{Argon2,PasswordHash,PasswordVerifier};
 #[tauri::command] pub fn update_employee(db:State<'_,Database>,employee:Employee)->Result<(),String>{db.update_employee(&employee,&now()).map_err(|e|e.to_string())}
 #[tauri::command] pub fn record_attendance(db:State<'_,Database>,id:String,employee_id:String,date:String,check_in:String,token_id:String,payload:String)->Result<(),String>{db.record_attendance(&id,&employee_id,&date,&check_in,&token_id,&payload).map_err(|e|e.to_string())}
 #[tauri::command] pub fn attendance_today(db:State<'_,Database>,date:String)->Result<Vec<crate::db::AttendanceRow>,String>{db.attendance_today(&date).map_err(|e|e.to_string())}
-#[tauri::command] pub fn login(db:State<'_,Database>,request:LoginRequest)->Result<LoginResponse,String>{let(id,stored,employee_id,role)=db.authenticate_user(&request.username).map_err(|_|"Invalid username or password".to_string())?;let parsed=PasswordHash::new(&stored).map_err(|_|"Invalid username or password".to_string())?;Argon2::default().verify_password(request.password.as_bytes(),&parsed).map_err(|_|"Invalid username or password".to_string())?;let display_role=if role=="hr_admin"{"HR Admin"}else{"Employee"};Ok(LoginResponse{id,username:request.username,role:display_role.into(),employee_id})}
+#[tauri::command] pub fn login(db:State<'_,Database>,request:LoginRequest)->Result<LoginResponse,String>{let(id,stored,employee_id,role,must_change_password)=db.authenticate_user(&request.username).map_err(|_|"Invalid username or password".to_string())?;let parsed=PasswordHash::new(&stored).map_err(|_|"Invalid username or password".to_string())?;Argon2::default().verify_password(request.password.as_bytes(),&parsed).map_err(|_|"Invalid username or password".to_string())?;let display_role=if role=="hr_admin"{"HR Admin"}else{"Employee"};Ok(LoginResponse{id,username:request.username,role:display_role.into(),employee_id,must_change_password})}
+#[tauri::command] pub fn change_password(db:State<'_,Database>,request:ChangePasswordRequest)->Result<(),String>{let password=request.new_password.trim();if password.len()<8{return Err("Password must be at least 8 characters long.".into())}if password.chars().all(|c|c.is_ascii_alphanumeric()){return Err("Password must include at least one special character.".into())}let salt=SaltString::generate(&mut OsRng);let hash=Argon2::default().hash_password(password.as_bytes(),&salt).map_err(|_|"Could not create password hash".to_string())?.to_string();db.change_password(&request.username,&hash,&now()).map_err(|_|"Password change is no longer required or the user is invalid.".to_string())}
 #[tauri::command] pub fn users_list(db:State<'_,Database>)->Result<Vec<crate::db::User>,String>{db.list_users().map_err(|e|e.to_string())}
 #[tauri::command] pub fn user_create(db:State<'_,Database>,request:CreateUserRequest)->Result<(),String>{db.create_user(&request.id,&request.username,&request.password_hash,&request.role,request.employee_id.as_deref(),&now()).map_err(|e|e.to_string())}
 #[tauri::command] pub fn user_update(db:State<'_,Database>,request:UpdateUserRequest)->Result<(),String>{db.update_user(&request.id,&request.username,&request.role,request.employee_id.as_deref(),request.active,&now()).map_err(|e|e.to_string())}
