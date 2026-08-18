@@ -1,5 +1,6 @@
 mod commands;
 mod db;
+mod attendance;
 mod leave;
 mod payroll;
 mod sync;
@@ -31,6 +32,9 @@ pub fn run() {
             commands::update_employee,
             commands::record_attendance,
             commands::attendance_today,
+            commands::attendance_history,
+            commands::attendance_summary,
+            commands::attendance_delete,
             commands::login,
             commands::change_password,
             commands::users_list,
