@@ -5,10 +5,10 @@ use argon2::password_hash::SaltString;
 use rand::rngs::OsRng;
 #[derive(serde::Deserialize)] pub struct LoginRequest{pub username:String,pub password:String}
 #[derive(serde::Serialize)] pub struct LoginResponse{pub id:String,pub username:String,pub role:String,pub employee_id:Option<String>,pub must_change_password:bool}
-#[derive(serde::Deserialize)] pub struct ChangePasswordRequest{pub username:String,pub new_password:String}
-#[derive(serde::Deserialize)] pub struct TursoSaveRequest{pub database_url:String,pub auth_token:String}
-#[derive(serde::Deserialize)] pub struct CreateUserRequest{pub id:String,pub username:String,pub password_hash:String,pub role:String,pub employee_id:Option<String>}
-#[derive(serde::Deserialize)] pub struct UpdateUserRequest{pub id:String,pub username:String,pub role:String,pub employee_id:Option<String>,pub active:bool}
+#[derive(serde::Deserialize)] #[serde(rename_all="camelCase")] pub struct ChangePasswordRequest{pub username:String,pub new_password:String}
+#[derive(serde::Deserialize)] #[serde(rename_all="camelCase")] pub struct TursoSaveRequest{pub database_url:String,pub auth_token:String}
+#[derive(serde::Deserialize)] #[serde(rename_all="camelCase")] pub struct CreateUserRequest{pub id:String,pub username:String,pub password_hash:String,pub role:String,pub employee_id:Option<String>}
+#[derive(serde::Deserialize)] #[serde(rename_all="camelCase")] pub struct UpdateUserRequest{pub id:String,pub username:String,pub role:String,pub employee_id:Option<String>,pub active:bool}
 #[tauri::command] pub fn database_status(db:State<'_,Database>)->Result<String,String>{db.list_employees().map(|_|"sqlite-ready".into()).map_err(|e|e.to_string())}
 #[tauri::command] pub fn employees_list(db:State<'_,Database>)->Result<Vec<Employee>,String>{db.list_employees().map_err(|e|e.to_string())}
 #[tauri::command] pub fn create_employee(db:State<'_,Database>,employee:Employee)->Result<(),String>{db.add_employee(&employee,&now()).map_err(|e|e.to_string())}
