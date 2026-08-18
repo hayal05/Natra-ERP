@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::{fs, path::{Path, PathBuf}};
 use thiserror::Error;
 
-pub const DB_SCHEMA_VERSION: i32 = 10;
+pub const DB_SCHEMA_VERSION: i32 = 11;
 const DEFAULT_ADMIN_PASSWORD_HASH: &str = "$argon2id$v=19$m=65536,t=3,p=4$9+8DePK/MlZJ/0iA2XHylg$jVFn51IEt/eYTkue7hkmbJJlfg1mxsksIV3NwWFxilE";
 
 #[derive(Debug, Error)]
@@ -106,11 +106,14 @@ impl Database {
             _ => {}
         }
 
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs().to_string();
+        let now = now_string();
         c.execute("INSERT OR IGNORE INTO users(id,username,password_hash,role,employee_id,active,must_change_password,created_at,updated_at) VALUES('admin','admin',?, 'hr_admin',NULL,1,1,?,?)", params![DEFAULT_ADMIN_PASSWORD_HASH, now, now])?;
 
+        // Version 11 repairs the bootstrap administrator only when it is still in
+        // first-run state. This deliberately does NOT overwrite an administrator
+        // who has already completed the temporary-password change.
         if old_version < DB_SCHEMA_VERSION {
-            c.execute("UPDATE users SET password_hash=?, must_change_password=1, active=1, role='hr_admin', updated_at=? WHERE lower(username)='admin'", params![DEFAULT_ADMIN_PASSWORD_HASH, now])?;
+            c.execute("UPDATE users SET username='admin', password_hash=?, must_change_password=1, active=1, role='hr_admin', updated_at=? WHERE lower(username)='admin' AND must_change_password=1", params![DEFAULT_ADMIN_PASSWORD_HASH, now])?;
         }
         Ok(())
     }
@@ -119,16 +122,23 @@ impl Database {
         if !username.trim().eq_ignore_ascii_case("admin") || password != "Admin@123" { return Ok(()); }
         let mut c = self.connect()?;
         let tx = c.transaction()?;
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs().to_string();
-        let row: Option<(String, bool)> = tx.query_row("SELECT id,must_change_password FROM users WHERE lower(username)='admin' LIMIT 1", [], |r| Ok((r.get(0)?, r.get::<_, i64>(1)? != 0))).optional()?;
+        let now = now_string();
+        let row: Option<(String, bool, bool, String)> = tx.query_row(
+            "SELECT id,must_change_password,active,role FROM users WHERE lower(username)='admin' LIMIT 1",
+            [],
+            |r| Ok((r.get(0)?, r.get::<_, i64>(1)? != 0, r.get::<_, i64>(2)? != 0, r.get(3)?))
+        ).optional()?;
         match row {
             None => {
                 tx.execute("INSERT INTO users(id,username,password_hash,role,employee_id,active,must_change_password,created_at,updated_at) VALUES('admin','admin',?,'hr_admin',NULL,1,1,?,?)", params![DEFAULT_ADMIN_PASSWORD_HASH, now, now])?;
             }
-            Some((_, true)) => {
-                tx.execute("UPDATE users SET username='admin',password_hash=?,role='hr_admin',active=1,must_change_password=1,updated_at=? WHERE lower(username)='admin'", params![DEFAULT_ADMIN_PASSWORD_HASH, now])?;
+            Some((_, true, _, _)) => {
+                // The temporary password is allowed only while the account is
+                // explicitly marked as first-run. Repair its hash/state before
+                // verification so a damaged fresh database can still bootstrap.
+                tx.execute("UPDATE users SET username='admin',password_hash=?,role='hr_admin',active=1,must_change_password=1,updated_at=? WHERE lower(username)='admin' AND must_change_password=1", params![DEFAULT_ADMIN_PASSWORD_HASH, now])?;
             }
-            Some((_, false)) => {}
+            Some(_) => {}
         }
         tx.commit()?;
         Ok(())
@@ -145,4 +155,8 @@ impl Database {
     pub fn list_users(&self)->Result<Vec<User>,DbError>{let c=self.connect()?;let mut s=c.prepare("SELECT id,username,role,employee_id,active,must_change_password FROM users ORDER BY username")?;let rows=s.query_map([],|r|Ok(User{id:r.get(0)?,username:r.get(1)?,role:r.get(2)?,employee_id:r.get(3)?,active:r.get::<_,i64>(4)?!=0,must_change_password:r.get::<_,i64>(5)?!=0}))?;Ok(rows.collect::<Result<Vec<_>,_>>()?)}
     pub fn record_attendance(&self,id:&str,employee_id:&str,date:&str,check_in:&str,token_id:&str,payload:&str)->Result<(),DbError>{let mut c=self.connect()?;let tx=c.transaction()?;tx.execute("INSERT INTO attendance(id,employee_id,attendance_date,check_in_at,status,token_id,created_at) VALUES(?,?,?,?,'present',?,?)",params![id,employee_id,date,check_in,token_id,check_in])?;self.queue(&tx,"attendance",id,payload,check_in)?;tx.commit()?;Ok(())}
     pub fn attendance_today(&self,date:&str)->Result<Vec<AttendanceRow>,DbError>{let c=self.connect()?;let mut s=c.prepare("SELECT a.id,a.employee_id,e.first_name||' '||e.last_name,e.department,a.attendance_date,a.check_in_at,a.token_id,a.status FROM attendance a JOIN employees e ON e.id=a.employee_id WHERE a.attendance_date=? ORDER BY a.check_in_at DESC")?;let rows=s.query_map([date],|r|Ok(AttendanceRow{id:r.get(0)?,employee_id:r.get(1)?,employee_name:r.get(2)?,department:r.get(3)?,attendance_date:r.get(4)?,check_in_at:r.get(5)?,token_id:r.get(6)?,status:r.get(7)?}))?;Ok(rows.collect::<Result<Vec<_>,_>>()?)}
+}
+
+fn now_string() -> String {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs().to_string()
 }
