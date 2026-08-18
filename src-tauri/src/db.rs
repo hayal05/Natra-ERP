@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::{fs, path::{Path, PathBuf}};
 use thiserror::Error;
 
-pub const DB_SCHEMA_VERSION: i32 = 6;
-const DEFAULT_ADMIN_PASSWORD_HASH: &str = "$argon2id$v=19$m=65536,t=3,p=4$umGfOa6ngfksn7niwTGVzw$UXMW5oNmUmsmbpaoe5njMhQEyZGXRa67Zc4DM1ZX+dU";
+pub const DB_SCHEMA_VERSION: i32 = 7;
+const DEFAULT_ADMIN_PASSWORD_HASH: &str = "$argon2id$v=19$m=65536,t=3,p=4$9+8DePK/MlZJ/0iA2XHylg$jVFn51IEt/eYTkue7hkmbJJlfg1mxsksIV3NwWFxilE";
 
 #[derive(Debug, Error)]
 pub enum DbError {
@@ -118,10 +118,10 @@ impl Database {
             params![DEFAULT_ADMIN_PASSWORD_HASH, now, now],
         )?;
 
-        // One-time recovery migration: installations created before schema 6
-        // may contain the broken initial admin password. Reset only those old
-        // databases to the known temporary password and force first-login reset.
-        if old_version < 6 {
+        // Schema 7 recovery: reset the built-in admin account on installations
+        // that were created by schema 6 or earlier. This repairs older builds
+        // whose stored bootstrap hash did not match the documented password.
+        if old_version < 7 {
             c.execute(
                 "UPDATE users SET password_hash=?, must_change_password=1, active=1, role='hr_admin', updated_at=? WHERE username='admin'",
                 params![DEFAULT_ADMIN_PASSWORD_HASH, now],
