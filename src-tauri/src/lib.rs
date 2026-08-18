@@ -5,6 +5,7 @@ mod payroll;
 mod sync;
 mod turso;
 mod autosync;
+mod backup;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -41,7 +42,10 @@ pub fn run() {
             commands::turso_disconnect,
             commands::turso_test_connection,
             commands::sync_status,
-            commands::sync_now
+            commands::sync_now,
+            commands::backup_create,
+            commands::backup_list,
+            commands::database_integrity
         ])
         .run(tauri::generate_context!())
         .expect("error while running NATRA ERP");
