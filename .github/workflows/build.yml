@@ -39,7 +39,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          projectPath: .
+          projectPath: src-tauri
           tagName: natra-erp-v__VERSION__
           releaseName: Natra ERP v__VERSION__
           releaseBody: Automated Windows build.
