@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-windows:
@@ -26,6 +26,9 @@ jobs:
 
       - name: Build frontend
         run: npm run build
+
+      - name: Generate Tauri icons
+        run: npx @tauri-apps/cli@2.11.0 icon src-tauri/app-icon.svg
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
