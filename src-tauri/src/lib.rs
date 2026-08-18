@@ -36,6 +36,7 @@ pub fn run() {
             commands::users_list,
             commands::user_create,
             commands::user_update,
+            commands::user_reset_password,
             commands::leave_create,
             commands::leave_list,
             commands::leave_review,
