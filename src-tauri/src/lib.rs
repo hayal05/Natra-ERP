@@ -32,6 +32,8 @@ pub fn run() {
             commands::leave_review,
             commands::payroll_create,
             commands::payroll_list,
+            commands::payroll_period,
+            commands::payroll_process,
             commands::turso_status,
             commands::turso_save,
             commands::turso_disconnect,
