@@ -1,5 +1,5 @@
 use crate::{sync, turso};
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{path::PathBuf, time::Duration};
 use tokio::time::sleep;
 
 pub fn start(path: PathBuf) {
