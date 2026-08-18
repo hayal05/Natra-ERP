@@ -1,5 +1,6 @@
 mod commands;
 mod db;
+mod leave;
 mod sync;
 mod turso;
 
@@ -9,6 +10,10 @@ pub fn run() {
         .setup(|app| {
             let app_data = app.path().app_data_dir().expect("NATRA ERP app data directory unavailable");
             let database = db::Database::open(&app_data).expect("NATRA ERP SQLite initialization failed");
+            {
+                let conn = rusqlite::Connection::open(database.path()).expect("NATRA ERP leave database unavailable");
+                leave::migrate(&conn).expect("NATRA ERP leave migration failed");
+            }
             app.manage(database);
             Ok(())
         })
@@ -20,6 +25,9 @@ pub fn run() {
             commands::record_attendance,
             commands::attendance_today,
             commands::login,
+            commands::leave_create,
+            commands::leave_list,
+            commands::leave_review,
             commands::turso_status,
             commands::turso_save,
             commands::turso_disconnect,
