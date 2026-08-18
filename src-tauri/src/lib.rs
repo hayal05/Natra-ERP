@@ -10,55 +10,6 @@ mod backup;
 
 use tauri::Manager;
 
-#[derive(Debug, serde::Serialize)]
-struct PayrollPayslip {
-    salary_id: String,
-    employee_id: String,
-    employee_number: String,
-    employee_name: String,
-    department: Option<String>,
-    position: Option<String>,
-    pay_period: String,
-    base_salary: f64,
-    allowances: f64,
-    deductions: f64,
-    gross_salary: f64,
-    net_salary: f64,
-    status: String,
-    processed_at: Option<String>,
-    processed_by: Option<String>,
-}
-
-#[tauri::command]
-pub fn payroll_payslip(db: tauri::State<'_, db::Database>, salary_id: String) -> Result<PayrollPayslip, String> {
-    let conn = rusqlite::Connection::open(db.path()).map_err(|e| e.to_string())?;
-    let result = conn.query_row(
-        "SELECT s.id,s.employee_id,e.employee_number,e.first_name || ' ' || e.last_name,e.department,e.position,s.pay_period,s.base_salary,s.allowances,s.deductions,s.net_salary,s.status,p.processed_at,p.processed_by FROM salary_records s JOIN employees e ON e.id=s.employee_id LEFT JOIN payroll_periods p ON p.period=s.pay_period WHERE s.id=?",
-        [&salary_id],
-        |r| Ok(PayrollPayslip {
-            salary_id: r.get(0)?,
-            employee_id: r.get(1)?,
-            employee_number: r.get(2)?,
-            employee_name: r.get(3)?,
-            department: r.get(4)?,
-            position: r.get(5)?,
-            pay_period: r.get(6)?,
-            base_salary: r.get(7)?,
-            allowances: r.get(8)?,
-            deductions: r.get(9)?,
-            gross_salary: r.get::<_, f64>(7)? + r.get::<_, f64>(8)?,
-            net_salary: r.get(10)?,
-            status: r.get(11)?,
-            processed_at: r.get(12)?,
-            processed_by: r.get(13)?,
-        }),
-    ).map_err(|e| e.to_string())?;
-    if result.status != "processed" {
-        return Err("Payslip is available only after the payroll period has been processed and locked.".into());
-    }
-    Ok(result)
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -103,7 +54,7 @@ pub fn run() {
             commands::payroll_periods,
             commands::payroll_update,
             commands::payroll_process,
-            payroll_payslip,
+            commands::payroll_payslip,
             commands::turso_status,
             commands::turso_save,
             commands::turso_disconnect,
