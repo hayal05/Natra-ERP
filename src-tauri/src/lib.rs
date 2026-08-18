@@ -4,6 +4,7 @@ mod leave;
 mod payroll;
 mod sync;
 mod turso;
+mod autosync;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -16,6 +17,7 @@ pub fn run() {
                 leave::migrate(&conn).expect("NATRA ERP leave migration failed");
                 payroll::migrate(&conn).expect("NATRA ERP payroll migration failed");
             }
+            autosync::start(database.path().clone());
             app.manage(database);
             Ok(())
         })
