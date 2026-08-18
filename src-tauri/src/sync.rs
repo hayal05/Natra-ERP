@@ -26,6 +26,13 @@ fn mark_success(path: &PathBuf, id: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn load_outbox(path: &PathBuf) -> Result<Vec<(String,String,String,String)>, String> {
+    let c = Connection::open(path).map_err(|e| e.to_string())?;
+    let mut stmt = c.prepare("SELECT id,entity,entity_id,payload FROM sync_outbox ORDER BY created_at LIMIT 50").map_err(|e| e.to_string())?;
+    let items = stmt.query_map([], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+    Ok(items)
+}
+
 async fn ensure_schema(conn: &libsql::Connection) -> Result<(), String> {
     conn.execute_batch("CREATE TABLE IF NOT EXISTS employees(id TEXT PRIMARY KEY,employee_number TEXT NOT NULL UNIQUE,first_name TEXT NOT NULL,last_name TEXT NOT NULL,email TEXT,phone TEXT,department TEXT,position TEXT,hire_date TEXT,status TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS attendance(id TEXT PRIMARY KEY,employee_id TEXT NOT NULL,attendance_date TEXT NOT NULL,check_in_at TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'present',token_id TEXT NOT NULL UNIQUE,created_at TEXT NOT NULL,UNIQUE(employee_id,attendance_date)); CREATE TABLE IF NOT EXISTS leave_requests(id TEXT PRIMARY KEY,employee_id TEXT NOT NULL,leave_type TEXT NOT NULL,start_date TEXT NOT NULL,end_date TEXT NOT NULL,reason TEXT,status TEXT NOT NULL,reviewed_by TEXT,reviewed_at TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS salary_records(id TEXT PRIMARY KEY,employee_id TEXT NOT NULL,pay_period TEXT NOT NULL,base_salary REAL NOT NULL DEFAULT 0,allowances REAL NOT NULL DEFAULT 0,deductions REAL NOT NULL DEFAULT 0,net_salary REAL NOT NULL DEFAULT 0,status TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,UNIQUE(employee_id,pay_period)); CREATE TABLE IF NOT EXISTS users(id TEXT PRIMARY KEY,username TEXT NOT NULL UNIQUE,password_hash TEXT NOT NULL,role TEXT NOT NULL,employee_id TEXT,active INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL,updated_at TEXT NOT NULL); CREATE TABLE IF NOT EXISTS payroll_periods(id TEXT PRIMARY KEY,period TEXT NOT NULL UNIQUE,status TEXT NOT NULL,processed_at TEXT,processed_by TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);").await.map_err(|e| e.to_string())?;
     Ok(())
@@ -35,10 +42,7 @@ pub async fn sync_once(path: &PathBuf, url: String, token: String) -> Result<Syn
     let remote = Builder::new_remote(url, token).build().await.map_err(|e| e.to_string())?;
     let conn = remote.connect().map_err(|e| e.to_string())?;
     ensure_schema(&conn).await?;
-    let c = Connection::open(path).map_err(|e| e.to_string())?;
-    let mut stmt = c.prepare("SELECT id,entity,entity_id,payload FROM sync_outbox ORDER BY created_at LIMIT 50").map_err(|e| e.to_string())?;
-    let items: Vec<(String,String,String,String)> = stmt.query_map([], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(|e| e.to_string())?.collect::<Result<_,_>>().map_err(|e| e.to_string())?;
-    drop(stmt); drop(c);
+    let items = load_outbox(path)?;
     for (outbox_id, entity, entity_id, payload) in items {
         let result: Result<(), String> = match entity.as_str() {
             "attendance" => {
