@@ -20,6 +20,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
 
       - name: Install frontend dependencies
         run: npm install
@@ -29,8 +30,9 @@ jobs:
 
       - name: Generate Tauri icons
         working-directory: src-tauri
+        shell: pwsh
         run: |
-          npx @tauri-apps/cli@2.11.0 icon app-icon.svg
+          npx --yes @tauri-apps/cli@2.11.4 icon app-icon.svg
           if (!(Test-Path "icons/icon.ico")) {
             Write-Error "Tauri icon generation failed: src-tauri/icons/icon.ico was not created"
             exit 1
