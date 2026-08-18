@@ -28,7 +28,13 @@ jobs:
         run: npm run build
 
       - name: Generate Tauri icons
-        run: npx @tauri-apps/cli@2.11.0 icon src-tauri/app-icon.svg
+        working-directory: src-tauri
+        run: |
+          npx @tauri-apps/cli@2.11.0 icon app-icon.svg
+          if (!(Test-Path "icons/icon.ico")) {
+            Write-Error "Tauri icon generation failed: src-tauri/icons/icon.ico was not created"
+            exit 1
+          }
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
