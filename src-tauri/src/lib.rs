@@ -16,7 +16,8 @@ pub fn run() {
             commands::create_employee,
             commands::update_employee,
             commands::record_attendance,
-            commands::attendance_today
+            commands::attendance_today,
+            commands::login
         ])
         .run(tauri::generate_context!())
         .expect("error while running NATRA ERP");
