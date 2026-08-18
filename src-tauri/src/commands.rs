@@ -27,4 +27,5 @@ use argon2::{Argon2,PasswordHash,PasswordVerifier};
 #[tauri::command] pub fn backup_create(db:State<'_,Database>)->Result<crate::backup::BackupInfo,String>{let dir=db.path().parent().unwrap_or(std::path::Path::new(".")).join("backups");let result=crate::backup::create(&db.path(),&dir)?;crate::backup::prune(&dir,10)?;Ok(result)}
 #[tauri::command] pub fn backup_list(db:State<'_,Database>)->Result<Vec<crate::backup::BackupInfo>,String>{let dir=db.path().parent().unwrap_or(std::path::Path::new(".")).join("backups");crate::backup::list(&dir)}
 #[tauri::command] pub fn database_integrity(db:State<'_,Database>)->Result<String,String>{crate::backup::integrity(&db.path())}
+#[tauri::command] pub fn backup_restore(db:State<'_,Database>,backup_path:String)->Result<crate::backup::BackupInfo,String>{let p=std::path::PathBuf::from(backup_path);crate::backup::restore(&db.path(),&p)}
 fn now()->String{use std::time::{SystemTime,UNIX_EPOCH};SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs().to_string()}
