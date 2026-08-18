@@ -1,0 +1,51 @@
+name: Publish NATRA ERP Mobile Web Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'web-test.html'
+      - 'src/web-test.js'
+      - 'src/dashboard.css'
+      - 'src/styles.css'
+      - '.github/workflows/mobile-web-test.yml'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare static site
+        run: |
+          mkdir -p _site/src
+          cp web-test.html _site/index.html
+          cp src/web-test.js _site/src/web-test.js
+          cp src/dashboard.css _site/src/dashboard.css
+          cp src/styles.css _site/src/styles.css
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
