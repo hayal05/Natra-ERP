@@ -14,6 +14,7 @@ A scalable Windows-first company ERP for **HR Admin** and **Employee** users.
 - Reports and audit history
 - Offline-first local data with cloud synchronization planned
 - Turso-ready data architecture
+- First-time HR Admin account recovery uses the temporary credential `admin / Admin@123`
 
 ## Brand
 
