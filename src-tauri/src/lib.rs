@@ -45,7 +45,8 @@ pub fn run() {
             commands::sync_now,
             commands::backup_create,
             commands::backup_list,
-            commands::database_integrity
+            commands::database_integrity,
+            commands::backup_restore
         ])
         .run(tauri::generate_context!())
         .expect("error while running NATRA ERP");
