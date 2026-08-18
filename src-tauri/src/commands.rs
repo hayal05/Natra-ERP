@@ -14,12 +14,10 @@ use argon2::{Argon2,PasswordHash,PasswordVerifier};
 #[tauri::command] pub fn attendance_today(db:State<'_,Database>,date:String)->Result<Vec<crate::db::AttendanceRow>,String>{db.attendance_today(&date).map_err(|e|e.to_string())}
 #[tauri::command] pub fn login(db:State<'_,Database>,request:LoginRequest)->Result<LoginResponse,String>{let (id,stored,employee_id,role)=db.authenticate_user(&request.username).map_err(|_|"Invalid username or password".to_string())?;let parsed=PasswordHash::new(&stored).map_err(|_|"Invalid username or password".to_string())?;Argon2::default().verify_password(request.password.as_bytes(),&parsed).map_err(|_|"Invalid username or password".to_string())?;Ok(LoginResponse{id,username:request.username,role,employee_id})}
 
-#[tauri::command]
-pub fn turso_status() -> Result<crate::turso::TursoConfig,String> { crate::turso::status() }
-#[tauri::command]
-pub fn turso_save(request:TursoSaveRequest) -> Result<(),String> { crate::turso::save(&request.database_url,&request.auth_token) }
-#[tauri::command]
-pub fn turso_disconnect() -> Result<(),String> { crate::turso::clear() }
-#[tauri::command]
-pub fn turso_test_connection() -> Result<String,String> { let (url,token)=crate::turso::credentials()?; if url.is_empty()||token.is_empty(){return Err("Turso is not configured".into())} if !url.starts_with("libsql://")&&!url.starts_with("https://"){return Err("Invalid Turso URL".into())} Ok("credentials-ready".into()) }
+#[tauri::command] pub fn turso_status() -> Result<crate::turso::TursoConfig,String> { crate::turso::status() }
+#[tauri::command] pub fn turso_save(request:TursoSaveRequest) -> Result<(),String> { crate::turso::save(&request.database_url,&request.auth_token) }
+#[tauri::command] pub fn turso_disconnect() -> Result<(),String> { crate::turso::clear() }
+#[tauri::command] pub async fn turso_test_connection() -> Result<String,String> { let (url,token)=crate::turso::credentials()?; if url.is_empty()||token.is_empty(){return Err("Turso is not configured".into())} let remote=libsql::Builder::new_remote(url,token).build().await.map_err(|e|e.to_string())?; let conn=remote.connect().map_err(|e|e.to_string())?; conn.execute("SELECT 1",()).await.map_err(|e|e.to_string())?; Ok("connected".into()) }
+#[tauri::command] pub fn sync_status(db:State<'_,Database>)->Result<crate::sync::SyncStatus,String>{crate::sync::status(&db.path())}
+#[tauri::command] pub async fn sync_now(db:State<'_,Database>)->Result<crate::sync::SyncStatus,String>{let (url,token)=crate::turso::credentials()?;if url.is_empty()||token.is_empty(){return Err("Turso is not configured".into())}crate::sync::sync_once(&db.path(),url,token).await}
 fn now()->String{use std::time::{SystemTime,UNIX_EPOCH};SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs().to_string()}
