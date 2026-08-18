@@ -1,3 +1,5 @@
+import './payroll.js';
+
 const invoke=globalThis.__TAURI__?.core?.invoke;
 let lastPage=null;
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
