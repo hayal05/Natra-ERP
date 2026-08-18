@@ -32,6 +32,7 @@ pub fn run() {
             commands::record_attendance,
             commands::attendance_today,
             commands::login,
+            commands::change_password,
             commands::users_list,
             commands::user_create,
             commands::user_update,
