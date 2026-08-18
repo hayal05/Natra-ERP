@@ -18,6 +18,9 @@ use argon2::{Argon2,PasswordHash,PasswordVerifier};
 #[tauri::command] pub fn leave_list(db:State<'_,Database>,status:Option<String>)->Result<Vec<crate::leave::LeaveRequest>,String>{let conn=rusqlite::Connection::open(db.path()).map_err(|e|e.to_string())?;crate::leave::list(&conn,status.as_deref()).map_err(|e|e.to_string())}
 #[tauri::command] pub fn leave_review(db:State<'_,Database>,id:String,status:String,reviewed_by:String)->Result<(),String>{crate::leave::review(&mut rusqlite::Connection::open(db.path()).map_err(|e|e.to_string())?,&id,&status,&reviewed_by,&now()).map_err(|e|e.to_string())}
 
+#[tauri::command] pub fn payroll_create(db:State<'_,Database>,salary:crate::payroll::SalaryRecord)->Result<(),String>{crate::payroll::create(&mut rusqlite::Connection::open(db.path()).map_err(|e|e.to_string())?,&salary,&now()).map_err(|e|e.to_string())}
+#[tauri::command] pub fn payroll_list(db:State<'_,Database>,pay_period:Option<String>)->Result<Vec<crate::payroll::SalaryRecord>,String>{let conn=rusqlite::Connection::open(db.path()).map_err(|e|e.to_string())?;crate::payroll::list(&conn,pay_period.as_deref()).map_err(|e|e.to_string())}
+
 #[tauri::command] pub fn turso_status() -> Result<crate::turso::TursoConfig,String> { crate::turso::status() }
 #[tauri::command] pub fn turso_save(request:TursoSaveRequest) -> Result<(),String> { crate::turso::save(&request.database_url,&request.auth_token) }
 #[tauri::command] pub fn turso_disconnect() -> Result<(),String> { crate::turso::clear() }
