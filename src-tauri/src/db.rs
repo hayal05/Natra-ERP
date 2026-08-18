@@ -6,7 +6,7 @@ use thiserror::Error;
 pub const DB_SCHEMA_VERSION:i32=4;
 #[derive(Debug,Error)] pub enum DbError{#[error("database error: {0}")]Sql(#[from]rusqlite::Error),#[error("filesystem error: {0}")]Io(#[from]std::io::Error),#[error("authentication failed")]AuthFailed}
 #[derive(Clone)] pub struct Database{path:PathBuf}
-#[derive(Debug,Serialize,Clone)] pub struct Employee{pub id:String,pub employee_number:String,pub first_name:String,pub last_name:String,pub email:Option<String>,pub phone:Option<String>,pub department:Option<String>,pub position:Option<String>,pub hire_date:Option<String>,pub status:String}
+#[derive(Debug,Serialize,Deserialize,Clone)] pub struct Employee{pub id:String,pub employee_number:String,pub first_name:String,pub last_name:String,pub email:Option<String>,pub phone:Option<String>,pub department:Option<String>,pub position:Option<String>,pub hire_date:Option<String>,pub status:String}
 #[derive(Debug,Serialize)] pub struct AttendanceRow{pub id:String,pub employee_id:String,pub employee_name:String,pub department:Option<String>,pub attendance_date:String,pub check_in_at:String,pub token_id:String,pub status:String}
 #[derive(Debug,Serialize,Clone)] pub struct User{pub id:String,pub username:String,pub role:String,pub employee_id:Option<String>,pub active:bool}
 #[derive(Debug,Serialize)] struct UserSync{pub id:String,pub username:String,pub password_hash:String,pub role:String,pub employee_id:Option<String>,pub active:bool}
