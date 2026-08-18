@@ -4,11 +4,10 @@ use std::{fs, path::{Path, PathBuf}};
 use thiserror::Error;
 
 pub const DB_SCHEMA_VERSION: i32 = 1;
-#[derive(Debug, Error)]
-pub enum DbError { #[error("database error: {0}")] Sql(#[from] rusqlite::Error), #[error("filesystem error: {0}")] Io(#[from] std::io::Error) }
+#[derive(Debug, Error)] pub enum DbError { #[error("database error: {0}")] Sql(#[from] rusqlite::Error), #[error("filesystem error: {0}")] Io(#[from] std::io::Error) }
 #[derive(Clone)] pub struct Database { path: PathBuf }
-#[derive(Debug, Serialize)]
-pub struct Employee { pub id:String,pub employee_number:String,pub first_name:String,pub last_name:String,pub email:Option<String>,pub phone:Option<String>,pub department:Option<String>,pub position:Option<String>,pub hire_date:Option<String>,pub status:String }
+#[derive(Debug, Serialize)] pub struct Employee { pub id:String,pub employee_number:String,pub first_name:String,pub last_name:String,pub email:Option<String>,pub phone:Option<String>,pub department:Option<String>,pub position:Option<String>,pub hire_date:Option<String>,pub status:String }
+#[derive(Debug, Serialize)] pub struct AttendanceRow { pub id:String,pub employee_id:String,pub employee_name:String,pub department:Option<String>,pub attendance_date:String,pub check_in_at:String,pub token_id:String,pub status:String }
 impl Database {
  pub fn open(app_data_dir:&Path)->Result<Self,DbError>{fs::create_dir_all(app_data_dir)?;let db=Self{path:app_data_dir.join("natra-erp.sqlite3")};db.migrate()?;Ok(db)}
  fn connect(&self)->Result<Connection,DbError>{let c=Connection::open(&self.path)?;c.pragma_update(None,"foreign_keys","ON")?;c.pragma_update(None,"journal_mode","WAL")?;Ok(c)}
@@ -17,5 +16,6 @@ impl Database {
  pub fn update_employee(&self,e:&Employee,now:&str)->Result<(),DbError>{let c=self.connect()?;let changed=c.execute("UPDATE employees SET employee_number=?,first_name=?,last_name=?,email=?,phone=?,department=?,position=?,hire_date=?,status=?,updated_at=? WHERE id=?",params![e.employee_number,e.first_name,e.last_name,e.email,e.phone,e.department,e.position,e.hire_date,e.status,now,e.id])?;if changed==0{return Err(rusqlite::Error::QueryReturnedNoRows.into())}Ok(())}
  pub fn list_employees(&self)->Result<Vec<Employee>,DbError>{let c=self.connect()?;let mut s=c.prepare("SELECT id,employee_number,first_name,last_name,email,phone,department,position,hire_date,status FROM employees ORDER BY first_name,last_name")?;let rows=s.query_map([],|r|Ok(Employee{id:r.get(0)?,employee_number:r.get(1)?,first_name:r.get(2)?,last_name:r.get(3)?,email:r.get(4)?,phone:r.get(5)?,department:r.get(6)?,position:r.get(7)?,hire_date:r.get(8)?,status:r.get(9)?}))?;Ok(rows.collect::<Result<Vec<_>,_>>()?)}
  pub fn record_attendance(&self,id:&str,employee_id:&str,date:&str,check_in:&str,token_id:&str,payload:&str)->Result<(),DbError>{let mut c=self.connect()?;let tx=c.transaction()?;tx.execute("INSERT INTO attendance(id,employee_id,attendance_date,check_in_at,status,token_id,created_at) VALUES(?,?,?,?,'present',?,?)",params![id,employee_id,date,check_in,token_id,check_in])?;tx.execute("INSERT INTO sync_outbox(id,operation,entity,entity_id,payload,created_at) VALUES(?, 'upsert','attendance',?,?,?)",params![format!("sync-{id}"),id,payload,check_in])?;tx.commit()?;Ok(())}
+ pub fn attendance_today(&self,date:&str)->Result<Vec<AttendanceRow>,DbError>{let c=self.connect()?;let mut s=c.prepare("SELECT a.id,a.employee_id,e.first_name || ' ' || e.last_name,e.department,a.attendance_date,a.check_in_at,a.token_id,a.status FROM attendance a JOIN employees e ON e.id=a.employee_id WHERE a.attendance_date=? ORDER BY a.check_in_at DESC")?;let rows=s.query_map([date],|r|Ok(AttendanceRow{id:r.get(0)?,employee_id:r.get(1)?,employee_name:r.get(2)?,department:r.get(3)?,attendance_date:r.get(4)?,check_in_at:r.get(5)?,token_id:r.get(6)?,status:r.get(7)?}))?;Ok(rows.collect::<Result<Vec<_>,_>>()?)}
 }
 pub fn database_filename()->&'static str{"natra-erp.sqlite3"}
