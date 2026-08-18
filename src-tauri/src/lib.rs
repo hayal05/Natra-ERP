@@ -51,6 +51,7 @@ pub fn run() {
             commands::payroll_create,
             commands::payroll_list,
             commands::payroll_period,
+            commands::payroll_periods,
             commands::payroll_update,
             commands::payroll_process,
             commands::turso_status,
