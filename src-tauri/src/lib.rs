@@ -1,6 +1,7 @@
 mod commands;
 mod db;
 mod leave;
+mod payroll;
 mod sync;
 mod turso;
 
@@ -13,6 +14,7 @@ pub fn run() {
             {
                 let conn = rusqlite::Connection::open(database.path()).expect("NATRA ERP leave database unavailable");
                 leave::migrate(&conn).expect("NATRA ERP leave migration failed");
+                payroll::migrate(&conn).expect("NATRA ERP payroll migration failed");
             }
             app.manage(database);
             Ok(())
@@ -28,6 +30,8 @@ pub fn run() {
             commands::leave_create,
             commands::leave_list,
             commands::leave_review,
+            commands::payroll_create,
+            commands::payroll_list,
             commands::turso_status,
             commands::turso_save,
             commands::turso_disconnect,
