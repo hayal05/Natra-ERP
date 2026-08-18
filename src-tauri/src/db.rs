@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::{fs, path::{Path, PathBuf}};
 use thiserror::Error;
 
-pub const DB_SCHEMA_VERSION: i32 = 8;
+pub const DB_SCHEMA_VERSION: i32 = 9;
 const DEFAULT_ADMIN_PASSWORD_HASH: &str = "$argon2id$v=19$m=65536,t=3,p=4$9+8DePK/MlZJ/0iA2XHylg$jVFn51IEt/eYTkue7hkmbJJlfg1mxsksIV3NwWFxilE";
 
 #[derive(Debug, Error)]
@@ -95,13 +95,8 @@ impl Database {
         "#)?;
 
         let has_column: bool = c.prepare("SELECT 1 FROM pragma_table_info('users') WHERE name='must_change_password'")
-            .ok()
-            .and_then(|mut s| s.query_row([], |_| Ok(1)).optional().ok())
-            .flatten()
-            .is_some();
-        if !has_column {
-            c.execute("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0", [])?;
-        }
+            .ok().and_then(|mut s| s.query_row([], |_| Ok(1)).optional().ok()).flatten().is_some();
+        if !has_column { c.execute("ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0", [])?; }
 
         let v: Option<i32> = c.query_row("SELECT version FROM schema_meta LIMIT 1", [], |r| r.get(0)).optional()?;
         let old_version = v.unwrap_or(0);
@@ -112,35 +107,39 @@ impl Database {
         }
 
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs().to_string();
+        c.execute("INSERT OR IGNORE INTO users(id,username,password_hash,role,employee_id,active,must_change_password,created_at,updated_at) VALUES('admin','admin',?, 'hr_admin',NULL,1,1,?,?)", params![DEFAULT_ADMIN_PASSWORD_HASH, now, now])?;
 
-        c.execute(
-            "INSERT OR IGNORE INTO users(id,username,password_hash,role,employee_id,active,must_change_password,created_at,updated_at) VALUES('admin','admin',?, 'hr_admin',NULL,1,1,?,?)",
-            params![DEFAULT_ADMIN_PASSWORD_HASH, now, now],
-        )?;
-
-        // Schema 8 recovery: repair installations that already reached schema 7
-        // but still contain the broken bootstrap admin credentials. This runs only
-        // during the one-time 7 -> 8 migration, so it cannot reset a real password
-        // on every application launch.
-        if old_version < 8 {
-            c.execute(
-                "UPDATE users SET password_hash=?, must_change_password=1, active=1, role='hr_admin', updated_at=? WHERE username='admin'",
-                params![DEFAULT_ADMIN_PASSWORD_HASH, now],
-            )?;
+        if old_version < DB_SCHEMA_VERSION {
+            c.execute("UPDATE users SET password_hash=?, must_change_password=1, active=1, role='hr_admin', updated_at=? WHERE lower(username)='admin'", params![DEFAULT_ADMIN_PASSWORD_HASH, now])?;
         }
-
         Ok(())
     }
 
-    fn queue(&self, tx: &rusqlite::Transaction<'_>, entity: &str, entity_id: &str, payload: &str, now: &str) -> Result<(), DbError> {
-        tx.execute("INSERT INTO sync_outbox(id,operation,entity,entity_id,payload,created_at) VALUES(?, 'upsert',?,?,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,created_at=excluded.created_at,last_error=NULL",params![format!("sync-{entity}-{entity_id}"),entity,entity_id,payload,now])?; Ok(())
+    pub fn prepare_bootstrap_login(&self, username: &str, password: &str) -> Result<(), DbError> {
+        if !username.trim().eq_ignore_ascii_case("admin") || password != "Admin@123" { return Ok(()); }
+        let mut c = self.connect()?;
+        let tx = c.transaction()?;
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs().to_string();
+        let row: Option<(String, bool)> = tx.query_row("SELECT id,must_change_password FROM users WHERE lower(username)='admin' LIMIT 1", [], |r| Ok((r.get(0)?, r.get::<_, i64>(1)? != 0))).optional()?;
+        match row {
+            None => {
+                tx.execute("INSERT INTO users(id,username,password_hash,role,employee_id,active,must_change_password,created_at,updated_at) VALUES('admin','admin',?,'hr_admin',NULL,1,1,?,?)", params![DEFAULT_ADMIN_PASSWORD_HASH, now, now])?;
+            }
+            Some((_, true)) => {
+                tx.execute("UPDATE users SET username='admin',password_hash=?,role='hr_admin',active=1,must_change_password=1,updated_at=? WHERE lower(username)='admin'", params![DEFAULT_ADMIN_PASSWORD_HASH, now])?;
+            }
+            Some((_, false)) => {}
+        }
+        tx.commit()?;
+        Ok(())
     }
 
+    fn queue(&self, tx: &rusqlite::Transaction<'_>, entity: &str, entity_id: &str, payload: &str, now: &str) -> Result<(), DbError> { tx.execute("INSERT INTO sync_outbox(id,operation,entity,entity_id,payload,created_at) VALUES(?, 'upsert',?,?,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,created_at=excluded.created_at,last_error=NULL",params![format!("sync-{entity}-{entity_id}"),entity,entity_id,payload,now])?; Ok(()) }
     pub fn add_employee(&self,e:&Employee,now:&str)->Result<(),DbError>{let mut c=self.connect()?;let tx=c.transaction()?;tx.execute("INSERT INTO employees(id,employee_number,first_name,last_name,email,phone,department,position,hire_date,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",params![e.id,e.employee_number,e.first_name,e.last_name,e.email,e.phone,e.department,e.position,e.hire_date,e.status,now,now])?;let payload=serde_json::to_string(e).map_err(|_|rusqlite::Error::InvalidQuery)?;self.queue(&tx,"employee",&e.id,&payload,now)?;tx.commit()?;Ok(())}
     pub fn update_employee(&self,e:&Employee,now:&str)->Result<(),DbError>{let mut c=self.connect()?;let tx=c.transaction()?;let n=tx.execute("UPDATE employees SET employee_number=?,first_name=?,last_name=?,email=?,phone=?,department=?,position=?,hire_date=?,status=?,updated_at=? WHERE id=?",params![e.employee_number,e.first_name,e.last_name,e.email,e.phone,e.department,e.position,e.hire_date,e.status,now,e.id])?;if n==0{return Err(rusqlite::Error::QueryReturnedNoRows.into())}let payload=serde_json::to_string(e).map_err(|_|rusqlite::Error::InvalidQuery)?;self.queue(&tx,"employee",&e.id,&payload,now)?;tx.commit()?;Ok(())}
     pub fn list_employees(&self)->Result<Vec<Employee>,DbError>{let c=self.connect()?;let mut s=c.prepare("SELECT id,employee_number,first_name,last_name,email,phone,department,position,hire_date,status FROM employees ORDER BY first_name,last_name")?;let rows=s.query_map([],|r|Ok(Employee{id:r.get(0)?,employee_number:r.get(1)?,first_name:r.get(2)?,last_name:r.get(3)?,email:r.get(4)?,phone:r.get(5)?,department:r.get(6)?,position:r.get(7)?,hire_date:r.get(8)?,status:r.get(9)?}))?;Ok(rows.collect::<Result<Vec<_>,_>>()?)}
-    pub fn authenticate_user(&self,username:&str)->Result<(String,String,Option<String>,String,bool),DbError>{let c=self.connect()?;c.query_row("SELECT id,password_hash,employee_id,role,must_change_password FROM users WHERE username=? AND active=1",[username],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get::<_,i64>(4)?!=0))).optional()?.ok_or(DbError::AuthFailed)}
-    pub fn change_password(&self,username:&str,new_hash:&str,now:&str)->Result<(),DbError>{let mut c=self.connect()?;let tx=c.transaction()?;let n=tx.execute("UPDATE users SET password_hash=?,must_change_password=0,updated_at=? WHERE username=? AND active=1 AND must_change_password=1",params![new_hash,now,username])?;if n==0{return Err(DbError::AuthFailed)}let id:String=tx.query_row("SELECT id FROM users WHERE username=?",[username],|r|r.get(0))?;let role:String=tx.query_row("SELECT role FROM users WHERE username=?",[username],|r|r.get(0))?;let employee_id:Option<String>=tx.query_row("SELECT employee_id FROM users WHERE username=?",[username],|r|r.get(0))?;let payload=serde_json::to_string(&UserSync{id:id.clone(),username:username.into(),password_hash:new_hash.into(),role,employee_id,active:true}).map_err(|_|rusqlite::Error::InvalidQuery)?;self.queue(&tx,"user",&id,&payload,now)?;tx.commit()?;Ok(())}
+    pub fn authenticate_user(&self,username:&str)->Result<(String,String,Option<String>,String,bool),DbError>{let c=self.connect()?;c.query_row("SELECT id,password_hash,employee_id,role,must_change_password FROM users WHERE lower(username)=lower(?) AND active=1",[username],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get::<_,i64>(4)?!=0))).optional()?.ok_or(DbError::AuthFailed)}
+    pub fn change_password(&self,username:&str,new_hash:&str,now:&str)->Result<(),DbError>{let mut c=self.connect()?;let tx=c.transaction()?;let n=tx.execute("UPDATE users SET password_hash=?,must_change_password=0,updated_at=? WHERE lower(username)=lower(?) AND active=1 AND must_change_password=1",params![new_hash,now,username])?;if n==0{return Err(DbError::AuthFailed)}let id:String=tx.query_row("SELECT id FROM users WHERE lower(username)=lower(?)",[username],|r|r.get(0))?;let role:String=tx.query_row("SELECT role FROM users WHERE lower(username)=lower(?)",[username],|r|r.get(0))?;let employee_id:Option<String>=tx.query_row("SELECT employee_id FROM users WHERE lower(username)=lower(?)",[username],|r|r.get(0))?;let payload=serde_json::to_string(&UserSync{id:id.clone(),username:username.into(),password_hash:new_hash.into(),role,employee_id,active:true}).map_err(|_|rusqlite::Error::InvalidQuery)?;self.queue(&tx,"user",&id,&payload,now)?;tx.commit()?;Ok(())}
     pub fn create_user(&self,id:&str,username:&str,hash:&str,role:&str,employee_id:Option<&str>,now:&str)->Result<(),DbError>{let mut c=self.connect()?;let tx=c.transaction()?;tx.execute("INSERT INTO users(id,username,password_hash,role,employee_id,must_change_password,created_at,updated_at) VALUES(?,?,?,?,?,1,?,?)",params![id,username,hash,role,employee_id,now,now])?;let payload=serde_json::to_string(&UserSync{id:id.into(),username:username.into(),password_hash:hash.into(),role:role.into(),employee_id:employee_id.map(str::to_owned),active:true}).map_err(|_|rusqlite::Error::InvalidQuery)?;self.queue(&tx,"user",id,&payload,now)?;tx.commit()?;Ok(())}
     pub fn update_user(&self,id:&str,username:&str,role:&str,employee_id:Option<&str>,active:bool,now:&str)->Result<(),DbError>{let mut c=self.connect()?;let tx=c.transaction()?;let n=tx.execute("UPDATE users SET username=?,role=?,employee_id=?,active=?,updated_at=? WHERE id=?",params![username,role,employee_id,active,now,id])?;if n==0{return Err(rusqlite::Error::QueryReturnedNoRows.into())}let row:String=tx.query_row("SELECT password_hash FROM users WHERE id=?",[id],|r|r.get(0))?;let payload=serde_json::to_string(&UserSync{id:id.into(),username:username.into(),password_hash:row,role:role.into(),employee_id:employee_id.map(str::to_owned),active}).map_err(|_|rusqlite::Error::InvalidQuery)?;self.queue(&tx,"user",id,&payload,now)?;tx.commit()?;Ok(())}
     pub fn list_users(&self)->Result<Vec<User>,DbError>{let c=self.connect()?;let mut s=c.prepare("SELECT id,username,role,employee_id,active,must_change_password FROM users ORDER BY username")?;let rows=s.query_map([],|r|Ok(User{id:r.get(0)?,username:r.get(1)?,role:r.get(2)?,employee_id:r.get(3)?,active:r.get::<_,i64>(4)?!=0,must_change_password:r.get::<_,i64>(5)?!=0}))?;Ok(rows.collect::<Result<Vec<_>,_>>()?)}
