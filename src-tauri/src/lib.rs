@@ -2,6 +2,7 @@ mod commands;
 mod db;
 mod attendance;
 mod leave;
+mod leave_hardening;
 mod payroll;
 mod sync;
 mod turso;
@@ -22,6 +23,7 @@ pub fn run() {
                 let conn = rusqlite::Connection::open(database.path()).expect("NATRA ERP employee database unavailable");
                 employee_hardening::migrate(&conn).expect("NATRA ERP employee hardening migration failed");
                 leave::migrate(&conn).expect("NATRA ERP leave migration failed");
+                leave_hardening::migrate(&conn).expect("NATRA ERP leave hardening migration failed");
                 payroll::migrate(&conn).expect("NATRA ERP payroll migration failed");
             }
             autosync::start(database.path().clone());
