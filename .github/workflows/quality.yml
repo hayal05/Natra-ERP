@@ -23,6 +23,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Generate Tauri icons
+        working-directory: src-tauri
+        run: npx --yes @tauri-apps/cli@2.11.4 icon app-icon.svg
+
       - name: Install Linux system dependencies
         run: |
           sudo apt-get update
