@@ -7,7 +7,7 @@ use std::{
 use thiserror::Error;
 
 pub const DB_SCHEMA_VERSION: i32 = 12;
-const DEFAULT_ADMIN_PASSWORD_HASH: &str = "$argon2id$v=19$m=65536,t=3,p=4$9+8DePK/MlZJ/0iA2XHylg$jVFn51IEt/eYTkue7hkmbJJlfg1mxsksIV3NwWFxilE";
+const DEFAULT_ADMIN_PASSWORD_HASH: &str = "$argon2id$v=19$m=65536,t=3,p=4$nuDPZRiwVbRM7K+pXEXq5g$HzsV3AgEt2naxLZRhmwX4n6hEfP0XnNAYF05Lg/ALXY";
 
 #[derive(Debug, Error)]
 pub enum DbError {
