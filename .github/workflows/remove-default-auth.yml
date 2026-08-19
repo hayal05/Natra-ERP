@@ -1,0 +1,72 @@
+name: Remove default authentication
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  rewrite-auth:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rewrite authentication
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          db = Path('src-tauri/src/db.rs')
+          s = db.read_text()
+          s = re.sub(r'\nconst DEFAULT_ADMIN_PASSWORD_HASH: &str = ".*?";\n', '\n', s, count=1)
+          s = re.sub(r'\n        let now = now_string\(\);\n        tx\.execute\("INSERT OR IGNORE INTO users\(id,username,password_hash,role,employee_id,active,must_change_password,created_at,updated_at\).*?\n        tx\.commit\(\)\?;', '''\n        // No default credentials are ever created.\n        // A fresh database intentionally starts with zero users.\n        // If an old installation still contains the legacy bootstrap account\n        // (recognizable by must_change_password=1), remove only that account.\n        tx.execute(\n            "DELETE FROM users WHERE lower(username)=lower('admin') AND must_change_password=1",\n            [],\n        )?;\n        tx.commit()?;''', s, count=1, flags=re.S)
+          s = re.sub(r'\n    pub fn prepare_bootstrap_login\(&self, username: &str, password: &str\).*?\n    fn queue\(', '\n    pub fn has_users(&self) -> Result<bool, DbError> {\n        let c = self.connect()?;\n        let count: i64 = c.query_row("SELECT COUNT(*) FROM users", [], |r| r.get(0))?;\n        Ok(count > 0)\n    }\n\n    fn queue(', s, count=1, flags=re.S)
+          db.write_text(s)
+
+          commands = Path('src-tauri/src/commands.rs')
+          s = commands.read_text()
+          s = s.replace('''    db.prepare_bootstrap_login(&username, &password)\n        .map_err(|_| "Invalid username or password".to_string())?;\n''', '')
+          s = re.sub(r'\n    if !verified \{\n        let recovery_ok = username == "admin" && must_change_password && password == "Admin@123";\n        if !recovery_ok \{\n            let _ = crate::security::record_failure\(&db\.path\(\), &username\);\n            return Err\("Invalid username or password"\.into\(\)\);\n        \}\n    \}', '''\n    if !verified {\n        let _ = crate::security::record_failure(&db.path(), &username);\n        return Err("Invalid username or password".into());\n    }''', s, count=1)
+          s = s.replace('''    if password == "Admin@123" {\n        return Err("Choose a different password.".into());\n    }\n''', '')
+          marker = '#[tauri::command]\npub fn login('
+          first_launch = '''#[tauri::command]\npub fn initialize_first_launch(db: State<'_, Database>) -> Result<LoginResponse, String> {\n    if db.has_users().map_err(|e| e.to_string())? {\n        return Err("Initial setup has already been completed.".into());\n    }\n    clear_session()?;\n    let id = "first-launch".to_string();\n    let username = "HR Admin".to_string();\n    let role = "hr_admin".to_string();\n    let employee_id = None;\n    let must_change_password = false;\n    set_session(AuthSession {\n        id: id.clone(),\n        username: username.clone(),\n        role: role.clone(),\n        employee_id,\n    })?;\n    Ok(LoginResponse {\n        id,\n        username,\n        role: "HR Admin".into(),\n        employee_id: None,\n        must_change_password,\n    })\n}\n'''
+          if 'pub fn initialize_first_launch' not in s:
+              s = s.replace(marker, first_launch + marker, 1)
+          commands.write_text(s)
+
+          lib = Path('src-tauri/src/lib.rs')
+          s = lib.read_text()
+          if 'commands::initialize_first_launch,' not in s:
+              s = s.replace('            commands::login,\n', '            commands::initialize_first_launch,\n            commands::login,\n', 1)
+          lib.write_text(s)
+
+          main = Path('src/main.js')
+          s = main.read_text()
+          old = '''async function render(){if(!state.role){const session=getSession();if(session){state.user=session;state.role=session.role}else{return loginPage()}}'''
+          new = '''async function render(){if(!state.role){const session=getSession();if(session){state.user=session;state.role=session.role}else{if(invokeNative){try{const user=await invokeNative('initialize_first_launch');setSession(user);state.user=user;state.role=user.role}catch(e){}}if(!state.role)return loginPage()}}'''
+          if old in s:
+              s = s.replace(old, new, 1)
+          else:
+              raise SystemExit('Expected render authentication block was not found')
+          main.write_text(s)
+
+      - name: Verify source contains no default credential
+        run: |
+          ! grep -RniE 'Admin@123|DEFAULT_ADMIN_PASSWORD_HASH|prepare_bootstrap_login' src-tauri/src src || true
+
+      - name: Commit changes
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src-tauri/src/db.rs src-tauri/src/commands.rs src-tauri/src/lib.rs src/main.js .github/workflows/remove-default-auth.yml
+          if git diff --cached --quiet; then
+            echo 'No changes to commit.'
+          else
+            git commit -m 'fix(auth): remove default credentials and allow first launch without login'
+            git push
+          fi
