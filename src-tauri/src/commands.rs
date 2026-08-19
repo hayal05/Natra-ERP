@@ -1,68 +1,696 @@
 use std::sync::{Mutex, OnceLock};
-#[derive(Clone)] struct AuthSession { id:String, username:String, role:String, employee_id:Option<String> }
+#[derive(Clone)]
+struct AuthSession {
+    id: String,
+    username: String,
+    role: String,
+    employee_id: Option<String>,
+}
 static AUTH_SESSION: OnceLock<Mutex<Option<AuthSession>>> = OnceLock::new();
-fn session_store()->&'static Mutex<Option<AuthSession>>{AUTH_SESSION.get_or_init(||Mutex::new(None))}
-fn set_session(session:AuthSession)->Result<(),String>{*session_store().lock().map_err(|_|"Authentication session is unavailable.".to_string())?=Some(session);Ok(())}
-fn clear_session()->Result<(),String>{*session_store().lock().map_err(|_|"Authentication session is unavailable.".to_string())?=None;Ok(())}
-fn require_auth()->Result<AuthSession,String>{session_store().lock().map_err(|_|"Authentication session is unavailable.".to_string())?.clone().ok_or_else(||"Authentication required.".to_string())}
-fn require_hr_admin()->Result<AuthSession,String>{let s=require_auth()?;if s.role!="hr_admin"{return Err("HR Admin authorization required.".into())}Ok(s)}
-use tauri::State;
-use crate::db::{Database,Employee};
-use argon2::{Argon2,PasswordHash,PasswordHasher,PasswordVerifier};
+fn session_store() -> &'static Mutex<Option<AuthSession>> {
+    AUTH_SESSION.get_or_init(|| Mutex::new(None))
+}
+fn set_session(session: AuthSession) -> Result<(), String> {
+    *session_store()
+        .lock()
+        .map_err(|_| "Authentication session is unavailable.".to_string())? = Some(session);
+    Ok(())
+}
+fn clear_session() -> Result<(), String> {
+    *session_store()
+        .lock()
+        .map_err(|_| "Authentication session is unavailable.".to_string())? = None;
+    Ok(())
+}
+fn require_auth() -> Result<AuthSession, String> {
+    session_store()
+        .lock()
+        .map_err(|_| "Authentication session is unavailable.".to_string())?
+        .clone()
+        .ok_or_else(|| "Authentication required.".to_string())
+}
+fn require_hr_admin() -> Result<AuthSession, String> {
+    let s = require_auth()?;
+    if s.role != "hr_admin" {
+        return Err("HR Admin authorization required.".into());
+    }
+    Ok(s)
+}
+use crate::db::{Database, Employee};
 use argon2::password_hash::SaltString;
+use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use rand::rngs::OsRng;
-#[derive(serde::Deserialize)] pub struct LoginRequest{pub username:String,pub password:String}
-#[derive(serde::Serialize)] pub struct LoginResponse{pub id:String,pub username:String,pub role:String,pub employee_id:Option<String>,pub must_change_password:bool}
-#[derive(serde::Deserialize)] #[serde(rename_all="camelCase")] pub struct ChangePasswordRequest{pub username:String,pub new_password:String}
-#[derive(serde::Deserialize)] #[serde(rename_all="camelCase")] pub struct TursoSaveRequest{pub database_url:String,pub auth_token:String}
-#[derive(serde::Deserialize)] #[serde(rename_all="camelCase")] pub struct CreateUserRequest{pub id:String,pub username:String,pub password:String,pub role:String,pub employee_id:Option<String>}
-#[derive(serde::Deserialize)] #[serde(rename_all="camelCase")] pub struct UpdateUserRequest{pub id:String,pub username:String,pub role:String,pub employee_id:Option<String>,pub active:bool}
-#[derive(serde::Deserialize)] #[serde(rename_all="camelCase")] pub struct ResetPasswordRequest{pub id:String,pub new_password:String}
-#[derive(serde::Deserialize)] #[serde(rename_all="camelCase")] pub struct AttendanceHistoryRequest{pub employee_id:Option<String>,pub from_date:String,pub to_date:String}
-#[derive(serde::Deserialize)] #[serde(rename_all="camelCase")] pub struct AttendanceSummaryRequest{pub employee_id:Option<String>,pub from_date:String,pub to_date:String}
-#[derive(serde::Deserialize)] #[serde(rename_all="camelCase")] pub struct SaveLeaveTypeRequest{pub id:String,pub name:String,pub annual_days:i64,pub active:bool}
-#[derive(serde::Deserialize)] #[serde(rename_all="camelCase")] pub struct LeaveBalanceRequest{pub id:String,pub employee_id:String,pub leave_type_id:String,pub year:i32,pub allocated_days:i64,pub used_days:i64}
-#[derive(Debug,serde::Serialize)] pub struct PayrollPayslip{pub salary_id:String,pub employee_id:String,pub employee_number:String,pub employee_name:String,pub department:Option<String>,pub position:Option<String>,pub pay_period:String,pub base_salary:f64,pub allowances:f64,pub deductions:f64,pub gross_salary:f64,pub net_salary:f64,pub status:String,pub processed_at:Option<String>,pub processed_by:Option<String>}
-#[tauri::command] pub fn database_status(db:State<'_,Database>)->Result<String,String>{require_auth()?;db.list_employees().map(|_|"sqlite-ready".into()).map_err(|e|e.to_string())}
-#[tauri::command] pub fn employees_list(db:State<'_,Database>)->Result<Vec<Employee>,String>{require_hr_admin()?;db.list_employees().map_err(|e|e.to_string())}
-#[tauri::command] pub fn create_employee(db:State<'_,Database>,employee:Employee)->Result<(),String>{require_hr_admin()?;db.add_employee(&employee,&now()).map_err(|e|e.to_string())}
-#[tauri::command] pub fn update_employee(db:State<'_,Database>,employee:Employee)->Result<(),String>{require_hr_admin()?;db.update_employee(&employee,&now()).map_err(|e|e.to_string())}
-#[tauri::command] pub fn record_attendance(db:State<'_,Database>,id:String,employee_id:String,date:String,check_in:String,token_id:String,payload:String)->Result<(),String>{let s=require_auth()?;if s.role!="hr_admin"&&s.employee_id.as_deref()!=Some(employee_id.as_str()){return Err("You can only record attendance for your own employee account.".into())}db.record_attendance(&id,&employee_id,&date,&check_in,&token_id,&payload).map_err(|e|if e.to_string().contains("UNIQUE"){"Attendance has already been recorded for this employee today.".into()}else{e.to_string()})}
-#[tauri::command] pub fn attendance_today(db:State<'_,Database>,date:String)->Result<Vec<crate::db::AttendanceRow>,String>{require_hr_admin()?;db.attendance_today(&date).map_err(|e|e.to_string())}
-#[tauri::command] pub fn attendance_history(db:State<'_,Database>,request:AttendanceHistoryRequest)->Result<Vec<crate::attendance::AttendanceHistoryRow>,String>{let session=require_auth()?;if session.role!="hr_admin"&&request.employee_id.as_deref()!=session.employee_id.as_deref(){return Err("You are not authorized to view this attendance history.".into())}crate::attendance::history(&db.path(),request.employee_id.as_deref(),&request.from_date,&request.to_date)}
-#[tauri::command] pub fn attendance_summary(db:State<'_,Database>,request:AttendanceSummaryRequest)->Result<crate::attendance::AttendanceSummary,String>{let session=require_auth()?;if session.role!="hr_admin"&&request.employee_id.as_deref()!=session.employee_id.as_deref(){return Err("You are not authorized to view this attendance summary.".into())}crate::attendance::summary(&db.path(),request.employee_id.as_deref(),&request.from_date,&request.to_date)}
-#[tauri::command] pub fn attendance_delete(db:State<'_,Database>,attendance_id:String)->Result<(),String>{require_hr_admin()?;crate::attendance::delete(&db.path(),&attendance_id)}
-#[tauri::command] pub fn login(db:State<'_,Database>,username:String,password:String)->Result<LoginResponse,String>{clear_session()?;let username=username.trim().to_lowercase();crate::security::check_login(&db.path(),&username)?;db.prepare_bootstrap_login(&username,&password).map_err(|_|"Invalid username or password".to_string())?;let(id,stored,employee_id,role,must_change_password)=db.authenticate_user(&username).map_err(|_|{let _=crate::security::record_failure(&db.path(),&username);"Invalid username or password".to_string()})?;let verified=PasswordHash::new(&stored).ok().and_then(|p|Argon2::default().verify_password(password.as_bytes(),&p).ok()).is_some();if !verified{let recovery_ok=username=="admin"&&must_change_password&&password=="Admin@123";if !recovery_ok{let _=crate::security::record_failure(&db.path(),&username);return Err("Invalid username or password".into())}}let _=crate::security::record_success(&db.path(),&username);let display_role=if role=="hr_admin"{"HR Admin"}else{"Employee"};set_session(AuthSession{id:id.clone(),username:username.clone(),role:role.clone(),employee_id:employee_id.clone()})?;Ok(LoginResponse{id,username,role:display_role.into(),employee_id,must_change_password})}
-#[tauri::command] pub fn change_password(db:State<'_,Database>,request:ChangePasswordRequest)->Result<(),String>{let session=require_auth()?;if request.username.trim().to_lowercase()!=session.username{return Err("You can only change the password for the signed-in account.".into())}let password=request.new_password.trim();validate_password(password)?;if password=="Admin@123"{return Err("Choose a different password.".into())}let hash=hash_password(password)?;db.change_password(&session.username,&hash,&now()).map_err(|_|"Password change failed.".to_string())}
-#[tauri::command] pub fn logout()->Result<(),String>{clear_session()}
-#[tauri::command] pub fn users_list(db:State<'_,Database>)->Result<Vec<crate::db::User>,String>{require_hr_admin()?;db.list_users().map_err(|e|e.to_string())}
-#[tauri::command] pub fn user_create(db:State<'_,Database>,request:CreateUserRequest)->Result<(),String>{require_hr_admin()?;let username=request.username.trim().to_lowercase();if username.is_empty(){return Err("Username is required.".into())}if !matches!(request.role.as_str(),"hr_admin"|"employee"){return Err("Invalid user role.".into())}validate_password(request.password.trim())?;let hash=hash_password(request.password.trim())?;db.create_user(&request.id,&username,&hash,&request.role,request.employee_id.as_deref(),&now()).map_err(|e|e.to_string())}
-#[tauri::command] pub fn user_update(db:State<'_,Database>,request:UpdateUserRequest)->Result<(),String>{require_hr_admin()?;let username=request.username.trim().to_lowercase();if username.is_empty(){return Err("Username is required.".into())}if !matches!(request.role.as_str(),"hr_admin"|"employee"){return Err("Invalid user role.".into())}db.update_user(&request.id,&username,&request.role,request.employee_id.as_deref(),request.active,&now()).map_err(|e|e.to_string())}
-#[tauri::command] pub fn user_reset_password(db:State<'_,Database>,request:ResetPasswordRequest)->Result<(),String>{require_hr_admin()?;let password=request.new_password.trim();validate_password(password)?;let hash=hash_password(password)?;db.reset_password(&request.id,&hash,&now()).map_err(|_|"Unable to reset password for this user.".into())}
-#[tauri::command] pub fn leave_create(db:State<'_,Database>,leave:crate::leave::LeaveRequest)->Result<(),String>{let session=require_auth()?;if session.role!="hr_admin"&&session.employee_id.as_deref()!=Some(leave.employee_id.as_str()){return Err("You can only create leave for your own employee account.".into())}crate::leave::create(&mut rusqlite::Connection::open(db.path()).map_err(|e|e.to_string())?,&leave,&now()).map_err(|e|e.to_string())}
-#[tauri::command] pub fn leave_list(db:State<'_,Database>,status:Option<String>)->Result<Vec<crate::leave::LeaveRequest>,String>{let session=require_auth()?;let mut items=crate::leave::list(&rusqlite::Connection::open(db.path()).map_err(|e|e.to_string())?,status.as_deref()).map_err(|e|e.to_string())?;if session.role!="hr_admin"{let id=session.employee_id.ok_or("Employee account is not linked to an employee record.")?;items.retain(|x|x.employee_id==id)}Ok(items)}
-#[tauri::command] pub fn leave_review(db:State<'_,Database>,id:String,status:String,reviewed_by:String)->Result<(),String>{require_hr_admin()?;crate::leave::review(&mut rusqlite::Connection::open(db.path()).map_err(|e|e.to_string())?,&id,&status,&reviewed_by,&now()).map_err(|e|e.to_string())}
-#[tauri::command] pub fn leave_types_list(db:State<'_,Database>)->Result<Vec<crate::leave::LeaveType>,String>{require_auth()?;crate::leave::list_types(&rusqlite::Connection::open(db.path()).map_err(|e|e.to_string())?).map_err(|e|e.to_string())}
-#[tauri::command] pub fn leave_type_save(db:State<'_,Database>,request:SaveLeaveTypeRequest)->Result<(),String>{require_hr_admin()?;crate::leave::save_type(&mut rusqlite::Connection::open(db.path()).map_err(|e|e.to_string())?,&crate::leave::LeaveType{id:request.id,name:request.name,annual_days:request.annual_days,active:request.active},&now()).map_err(|e|e.to_string())}
-#[tauri::command] pub fn leave_balances_list(db:State<'_,Database>,employee_id:Option<String>,year:i32)->Result<Vec<crate::leave::LeaveBalance>,String>{let session=require_auth()?;if session.role!="hr_admin"&&employee_id.as_deref()!=session.employee_id.as_deref(){return Err("You are not authorized to view these leave balances.".into())}crate::leave::list_balances(&rusqlite::Connection::open(db.path()).map_err(|e|e.to_string())?,employee_id.as_deref(),year).map_err(|e|e.to_string())}
-#[tauri::command] pub fn leave_balance_save(db:State<'_,Database>,request:LeaveBalanceRequest)->Result<(),String>{require_hr_admin()?;crate::leave::set_balance(&mut rusqlite::Connection::open(db.path()).map_err(|e|e.to_string())?,&crate::leave::LeaveBalance{id:request.id,employee_id:request.employee_id,leave_type_id:request.leave_type_id,year:request.year,allocated_days:request.allocated_days,used_days:request.used_days,remaining_days:0}).map_err(|e|e.to_string())}
-#[tauri::command] pub fn payroll_create(db:State<'_,Database>,salary:crate::payroll::SalaryRecord)->Result<(),String>{require_hr_admin()?;crate::payroll::create(&mut rusqlite::Connection::open(db.path()).map_err(|e|e.to_string())?,&salary,&now()).map_err(|e|e.to_string())}
-#[tauri::command] pub fn payroll_list(db:State<'_,Database>,pay_period:Option<String>)->Result<Vec<crate::payroll::SalaryRecord>,String>{require_hr_admin()?;crate::payroll::list(&rusqlite::Connection::open(db.path()).map_err(|e|e.to_string())?,pay_period.as_deref()).map_err(|e|e.to_string())}
-#[tauri::command] pub fn payroll_period(db:State<'_,Database>,period:String)->Result<crate::payroll::PayrollPeriod,String>{require_hr_admin()?;crate::payroll::period(&rusqlite::Connection::open(db.path()).map_err(|e|e.to_string())?,&period).map_err(|e|e.to_string())}
-#[tauri::command] pub fn payroll_periods(db:State<'_,Database>)->Result<Vec<crate::payroll::PayrollPeriod>,String>{require_hr_admin()?;crate::payroll::periods(&rusqlite::Connection::open(db.path()).map_err(|e|e.to_string())?).map_err(|e|e.to_string())}
-#[tauri::command] pub fn payroll_update(db:State<'_,Database>,salary:crate::payroll::SalaryRecord)->Result<(),String>{require_hr_admin()?;crate::payroll::update(&mut rusqlite::Connection::open(db.path()).map_err(|e|e.to_string())?,&salary,&now()).map_err(|e|e.to_string())}
-#[tauri::command] pub fn payroll_process(db:State<'_,Database>,period:String,processed_by:String)->Result<(),String>{require_hr_admin()?;crate::payroll::process(&mut rusqlite::Connection::open(db.path()).map_err(|e|e.to_string())?,&period,&processed_by,&now()).map_err(|e|e.to_string())}
-#[tauri::command] pub fn payroll_payslip(db:State<'_,Database>,salary_id:String)->Result<PayrollPayslip,String>{let session=require_auth()?;let conn=rusqlite::Connection::open(db.path()).map_err(|e|e.to_string())?;let result=conn.query_row("SELECT s.id,s.employee_id,e.employee_number,e.first_name || ' ' || e.last_name,e.department,e.position,s.pay_period,s.base_salary,s.allowances,s.deductions,s.net_salary,s.status,p.processed_at,p.processed_by FROM salary_records s JOIN employees e ON e.id=s.employee_id LEFT JOIN payroll_periods p ON p.period=s.pay_period WHERE s.id=?",[&salary_id],|r|Ok(PayrollPayslip{salary_id:r.get(0)?,employee_id:r.get(1)?,employee_number:r.get(2)?,employee_name:r.get(3)?,department:r.get(4)?,position:r.get(5)?,pay_period:r.get(6)?,base_salary:r.get(7)?,allowances:r.get(8)?,deductions:r.get(9)?,gross_salary:r.get::<_,f64>(7)?+r.get::<_,f64>(8)?,net_salary:r.get(10)?,status:r.get(11)?,processed_at:r.get(12)?,processed_by:r.get(13)?})).map_err(|e|e.to_string())?;if result.status!="processed"{return Err("Payslip is available only after the payroll period has been processed and locked.".into())}if session.role!="hr_admin"&&session.employee_id.as_deref()!=Some(result.employee_id.as_str()){return Err("You are not authorized to view this payslip.".into())}Ok(result)}
-#[tauri::command] pub fn turso_status()->Result<crate::turso::TursoConfig,String>{require_hr_admin()?;crate::turso::status()}
-#[tauri::command] pub fn turso_save(request:TursoSaveRequest)->Result<(),String>{require_hr_admin()?;crate::turso::save(&request.database_url,&request.auth_token)}
-#[tauri::command] pub fn turso_disconnect()->Result<(),String>{require_hr_admin()?;crate::turso::clear()}
-#[tauri::command] pub async fn turso_test_connection()->Result<String,String>{require_hr_admin()?;let(url,token)=crate::turso::credentials()?;let remote=libsql::Builder::new_remote(url,token).build().await.map_err(|e|format!("Turso connection failed: {e}"))?;let conn=remote.connect().map_err(|e|format!("Turso connection failed: {e}"))?;conn.execute("SELECT 1",()).await.map_err(|e|format!("Turso query failed: {e}"))?;Ok("connected".into())}
-#[tauri::command] pub fn sync_status(db:State<'_,Database>)->Result<crate::sync::SyncStatus,String>{require_auth()?;crate::sync::status(&db.path())}
-#[tauri::command] pub async fn sync_now(db:State<'_,Database>)->Result<crate::sync::SyncStatus,String>{require_hr_admin()?;let(url,token)=crate::turso::credentials()?;crate::sync::sync_once(&db.path(),url,token).await}
-#[tauri::command] pub fn backup_create(db:State<'_,Database>)->Result<crate::backup::BackupInfo,String>{require_hr_admin()?;let dir=db.path().parent().unwrap_or(std::path::Path::new(".")).join("backups");let result=crate::backup::create(&db.path(),&dir)?;crate::backup::prune(&dir,10)?;Ok(result)}
-#[tauri::command] pub fn backup_list(db:State<'_,Database>)->Result<Vec<crate::backup::BackupInfo>,String>{require_hr_admin()?;let dir=db.path().parent().unwrap_or(std::path::Path::new(".")).join("backups");crate::backup::list(&dir)}
-#[tauri::command] pub fn database_integrity(db:State<'_,Database>)->Result<String,String>{require_hr_admin()?;crate::backup::integrity(&db.path())}
-#[tauri::command] pub fn backup_restore(db:State<'_,Database>,backup_path:String)->Result<crate::backup::BackupInfo,String>{require_hr_admin()?;let p=std::path::PathBuf::from(backup_path);crate::backup::restore(&db.path(),&p)}
-fn validate_password(password:&str)->Result<(),String>{if password.len()<10{return Err("Password must be at least 10 characters long.".into())}if password.chars().any(|c|c.is_whitespace()||c.is_control()){return Err("Password cannot contain whitespace or control characters.".into())}if !password.chars().any(|c|c.is_ascii_uppercase()){return Err("Password must include an uppercase letter.".into())}if !password.chars().any(|c|c.is_ascii_lowercase()){return Err("Password must include a lowercase letter.".into())}if !password.chars().any(|c|c.is_ascii_digit()){return Err("Password must include a number.".into())}if !password.chars().any(|c|!c.is_ascii_alphanumeric()){return Err("Password must include a special character.".into())}Ok(())}
-fn hash_password(password:&str)->Result<String,String>{let salt=SaltString::generate(&mut OsRng);Ok(Argon2::default().hash_password(password.as_bytes(),&salt).map_err(|_|"Could not create password hash".to_string())?.to_string())}
-fn now()->String{use std::time::{SystemTime,UNIX_EPOCH};SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs().to_string()}
+use tauri::State;
+#[derive(serde::Deserialize)]
+pub struct LoginRequest {
+    pub username: String,
+    pub password: String,
+}
+#[derive(serde::Serialize)]
+pub struct LoginResponse {
+    pub id: String,
+    pub username: String,
+    pub role: String,
+    pub employee_id: Option<String>,
+    pub must_change_password: bool,
+}
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangePasswordRequest {
+    pub username: String,
+    pub new_password: String,
+}
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TursoSaveRequest {
+    pub database_url: String,
+    pub auth_token: String,
+}
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CreateUserRequest {
+    pub id: String,
+    pub username: String,
+    pub password: String,
+    pub role: String,
+    pub employee_id: Option<String>,
+}
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateUserRequest {
+    pub id: String,
+    pub username: String,
+    pub role: String,
+    pub employee_id: Option<String>,
+    pub active: bool,
+}
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResetPasswordRequest {
+    pub id: String,
+    pub new_password: String,
+}
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttendanceHistoryRequest {
+    pub employee_id: Option<String>,
+    pub from_date: String,
+    pub to_date: String,
+}
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttendanceSummaryRequest {
+    pub employee_id: Option<String>,
+    pub from_date: String,
+    pub to_date: String,
+}
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveLeaveTypeRequest {
+    pub id: String,
+    pub name: String,
+    pub annual_days: i64,
+    pub active: bool,
+}
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LeaveBalanceRequest {
+    pub id: String,
+    pub employee_id: String,
+    pub leave_type_id: String,
+    pub year: i32,
+    pub allocated_days: i64,
+    pub used_days: i64,
+}
+#[derive(Debug, serde::Serialize)]
+pub struct PayrollPayslip {
+    pub salary_id: String,
+    pub employee_id: String,
+    pub employee_number: String,
+    pub employee_name: String,
+    pub department: Option<String>,
+    pub position: Option<String>,
+    pub pay_period: String,
+    pub base_salary: f64,
+    pub allowances: f64,
+    pub deductions: f64,
+    pub gross_salary: f64,
+    pub net_salary: f64,
+    pub status: String,
+    pub processed_at: Option<String>,
+    pub processed_by: Option<String>,
+}
+#[tauri::command]
+pub fn database_status(db: State<'_, Database>) -> Result<String, String> {
+    require_auth()?;
+    db.list_employees()
+        .map(|_| "sqlite-ready".into())
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub fn employees_list(db: State<'_, Database>) -> Result<Vec<Employee>, String> {
+    require_hr_admin()?;
+    db.list_employees().map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub fn create_employee(db: State<'_, Database>, employee: Employee) -> Result<(), String> {
+    require_hr_admin()?;
+    db.add_employee(&employee, &now())
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub fn update_employee(db: State<'_, Database>, employee: Employee) -> Result<(), String> {
+    require_hr_admin()?;
+    db.update_employee(&employee, &now())
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub fn record_attendance(
+    db: State<'_, Database>,
+    id: String,
+    employee_id: String,
+    date: String,
+    check_in: String,
+    token_id: String,
+    payload: String,
+) -> Result<(), String> {
+    let s = require_auth()?;
+    if s.role != "hr_admin" && s.employee_id.as_deref() != Some(employee_id.as_str()) {
+        return Err("You can only record attendance for your own employee account.".into());
+    }
+    db.record_attendance(&id, &employee_id, &date, &check_in, &token_id, &payload)
+        .map_err(|e| {
+            if e.to_string().contains("UNIQUE") {
+                "Attendance has already been recorded for this employee today.".into()
+            } else {
+                e.to_string()
+            }
+        })
+}
+#[tauri::command]
+pub fn attendance_today(
+    db: State<'_, Database>,
+    date: String,
+) -> Result<Vec<crate::db::AttendanceRow>, String> {
+    require_hr_admin()?;
+    db.attendance_today(&date).map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub fn attendance_history(
+    db: State<'_, Database>,
+    request: AttendanceHistoryRequest,
+) -> Result<Vec<crate::attendance::AttendanceHistoryRow>, String> {
+    let session = require_auth()?;
+    if session.role != "hr_admin"
+        && request.employee_id.as_deref() != session.employee_id.as_deref()
+    {
+        return Err("You are not authorized to view this attendance history.".into());
+    }
+    crate::attendance::history(
+        &db.path(),
+        request.employee_id.as_deref(),
+        &request.from_date,
+        &request.to_date,
+    )
+}
+#[tauri::command]
+pub fn attendance_summary(
+    db: State<'_, Database>,
+    request: AttendanceSummaryRequest,
+) -> Result<crate::attendance::AttendanceSummary, String> {
+    let session = require_auth()?;
+    if session.role != "hr_admin"
+        && request.employee_id.as_deref() != session.employee_id.as_deref()
+    {
+        return Err("You are not authorized to view this attendance summary.".into());
+    }
+    crate::attendance::summary(
+        &db.path(),
+        request.employee_id.as_deref(),
+        &request.from_date,
+        &request.to_date,
+    )
+}
+#[tauri::command]
+pub fn attendance_delete(db: State<'_, Database>, attendance_id: String) -> Result<(), String> {
+    require_hr_admin()?;
+    crate::attendance::delete(&db.path(), &attendance_id)
+}
+#[tauri::command]
+pub fn login(
+    db: State<'_, Database>,
+    username: String,
+    password: String,
+) -> Result<LoginResponse, String> {
+    clear_session()?;
+    let username = username.trim().to_lowercase();
+    crate::security::check_login(&db.path(), &username)?;
+    db.prepare_bootstrap_login(&username, &password)
+        .map_err(|_| "Invalid username or password".to_string())?;
+    let (id, stored, employee_id, role, must_change_password) =
+        db.authenticate_user(&username).map_err(|_| {
+            let _ = crate::security::record_failure(&db.path(), &username);
+            "Invalid username or password".to_string()
+        })?;
+    let verified = PasswordHash::new(&stored)
+        .ok()
+        .and_then(|p| {
+            Argon2::default()
+                .verify_password(password.as_bytes(), &p)
+                .ok()
+        })
+        .is_some();
+    if !verified {
+        let recovery_ok = username == "admin" && must_change_password && password == "Admin@123";
+        if !recovery_ok {
+            let _ = crate::security::record_failure(&db.path(), &username);
+            return Err("Invalid username or password".into());
+        }
+    }
+    let _ = crate::security::record_success(&db.path(), &username);
+    let display_role = if role == "hr_admin" {
+        "HR Admin"
+    } else {
+        "Employee"
+    };
+    set_session(AuthSession {
+        id: id.clone(),
+        username: username.clone(),
+        role: role.clone(),
+        employee_id: employee_id.clone(),
+    })?;
+    Ok(LoginResponse {
+        id,
+        username,
+        role: display_role.into(),
+        employee_id,
+        must_change_password,
+    })
+}
+#[tauri::command]
+pub fn change_password(
+    db: State<'_, Database>,
+    request: ChangePasswordRequest,
+) -> Result<(), String> {
+    let session = require_auth()?;
+    if request.username.trim().to_lowercase() != session.username {
+        return Err("You can only change the password for the signed-in account.".into());
+    }
+    let password = request.new_password.trim();
+    validate_password(password)?;
+    if password == "Admin@123" {
+        return Err("Choose a different password.".into());
+    }
+    let hash = hash_password(password)?;
+    db.change_password(&session.username, &hash, &now())
+        .map_err(|_| "Password change failed.".to_string())
+}
+#[tauri::command]
+pub fn logout() -> Result<(), String> {
+    clear_session()
+}
+#[tauri::command]
+pub fn users_list(db: State<'_, Database>) -> Result<Vec<crate::db::User>, String> {
+    require_hr_admin()?;
+    db.list_users().map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub fn user_create(db: State<'_, Database>, request: CreateUserRequest) -> Result<(), String> {
+    require_hr_admin()?;
+    let username = request.username.trim().to_lowercase();
+    if username.is_empty() {
+        return Err("Username is required.".into());
+    }
+    if !matches!(request.role.as_str(), "hr_admin" | "employee") {
+        return Err("Invalid user role.".into());
+    }
+    validate_password(request.password.trim())?;
+    let hash = hash_password(request.password.trim())?;
+    db.create_user(
+        &request.id,
+        &username,
+        &hash,
+        &request.role,
+        request.employee_id.as_deref(),
+        &now(),
+    )
+    .map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub fn user_update(db: State<'_, Database>, request: UpdateUserRequest) -> Result<(), String> {
+    require_hr_admin()?;
+    let username = request.username.trim().to_lowercase();
+    if username.is_empty() {
+        return Err("Username is required.".into());
+    }
+    if !matches!(request.role.as_str(), "hr_admin" | "employee") {
+        return Err("Invalid user role.".into());
+    }
+    db.update_user(
+        &request.id,
+        &username,
+        &request.role,
+        request.employee_id.as_deref(),
+        request.active,
+        &now(),
+    )
+    .map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub fn user_reset_password(
+    db: State<'_, Database>,
+    request: ResetPasswordRequest,
+) -> Result<(), String> {
+    require_hr_admin()?;
+    let password = request.new_password.trim();
+    validate_password(password)?;
+    let hash = hash_password(password)?;
+    db.reset_password(&request.id, &hash, &now())
+        .map_err(|_| "Unable to reset password for this user.".into())
+}
+#[tauri::command]
+pub fn leave_create(
+    db: State<'_, Database>,
+    leave: crate::leave::LeaveRequest,
+) -> Result<(), String> {
+    let session = require_auth()?;
+    if session.role != "hr_admin"
+        && session.employee_id.as_deref() != Some(leave.employee_id.as_str())
+    {
+        return Err("You can only create leave for your own employee account.".into());
+    }
+    crate::leave::create(
+        &mut rusqlite::Connection::open(db.path()).map_err(|e| e.to_string())?,
+        &leave,
+        &now(),
+    )
+    .map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub fn leave_list(
+    db: State<'_, Database>,
+    status: Option<String>,
+) -> Result<Vec<crate::leave::LeaveRequest>, String> {
+    let session = require_auth()?;
+    let mut items = crate::leave::list(
+        &rusqlite::Connection::open(db.path()).map_err(|e| e.to_string())?,
+        status.as_deref(),
+    )
+    .map_err(|e| e.to_string())?;
+    if session.role != "hr_admin" {
+        let id = session
+            .employee_id
+            .ok_or("Employee account is not linked to an employee record.")?;
+        items.retain(|x| x.employee_id == id)
+    }
+    Ok(items)
+}
+#[tauri::command]
+pub fn leave_review(
+    db: State<'_, Database>,
+    id: String,
+    status: String,
+    reviewed_by: String,
+) -> Result<(), String> {
+    require_hr_admin()?;
+    crate::leave::review(
+        &mut rusqlite::Connection::open(db.path()).map_err(|e| e.to_string())?,
+        &id,
+        &status,
+        &reviewed_by,
+        &now(),
+    )
+    .map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub fn leave_types_list(db: State<'_, Database>) -> Result<Vec<crate::leave::LeaveType>, String> {
+    require_auth()?;
+    crate::leave::list_types(&rusqlite::Connection::open(db.path()).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub fn leave_type_save(
+    db: State<'_, Database>,
+    request: SaveLeaveTypeRequest,
+) -> Result<(), String> {
+    require_hr_admin()?;
+    crate::leave::save_type(
+        &mut rusqlite::Connection::open(db.path()).map_err(|e| e.to_string())?,
+        &crate::leave::LeaveType {
+            id: request.id,
+            name: request.name,
+            annual_days: request.annual_days,
+            active: request.active,
+        },
+        &now(),
+    )
+    .map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub fn leave_balances_list(
+    db: State<'_, Database>,
+    employee_id: Option<String>,
+    year: i32,
+) -> Result<Vec<crate::leave::LeaveBalance>, String> {
+    let session = require_auth()?;
+    if session.role != "hr_admin" && employee_id.as_deref() != session.employee_id.as_deref() {
+        return Err("You are not authorized to view these leave balances.".into());
+    }
+    crate::leave::list_balances(
+        &rusqlite::Connection::open(db.path()).map_err(|e| e.to_string())?,
+        employee_id.as_deref(),
+        year,
+    )
+    .map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub fn leave_balance_save(
+    db: State<'_, Database>,
+    request: LeaveBalanceRequest,
+) -> Result<(), String> {
+    require_hr_admin()?;
+    crate::leave::set_balance(
+        &mut rusqlite::Connection::open(db.path()).map_err(|e| e.to_string())?,
+        &crate::leave::LeaveBalance {
+            id: request.id,
+            employee_id: request.employee_id,
+            leave_type_id: request.leave_type_id,
+            year: request.year,
+            allocated_days: request.allocated_days,
+            used_days: request.used_days,
+            remaining_days: 0,
+        },
+    )
+    .map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub fn payroll_create(
+    db: State<'_, Database>,
+    salary: crate::payroll::SalaryRecord,
+) -> Result<(), String> {
+    require_hr_admin()?;
+    crate::payroll::create(
+        &mut rusqlite::Connection::open(db.path()).map_err(|e| e.to_string())?,
+        &salary,
+        &now(),
+    )
+    .map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub fn payroll_list(
+    db: State<'_, Database>,
+    pay_period: Option<String>,
+) -> Result<Vec<crate::payroll::SalaryRecord>, String> {
+    require_hr_admin()?;
+    crate::payroll::list(
+        &rusqlite::Connection::open(db.path()).map_err(|e| e.to_string())?,
+        pay_period.as_deref(),
+    )
+    .map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub fn payroll_period(
+    db: State<'_, Database>,
+    period: String,
+) -> Result<crate::payroll::PayrollPeriod, String> {
+    require_hr_admin()?;
+    crate::payroll::period(
+        &rusqlite::Connection::open(db.path()).map_err(|e| e.to_string())?,
+        &period,
+    )
+    .map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub fn payroll_periods(
+    db: State<'_, Database>,
+) -> Result<Vec<crate::payroll::PayrollPeriod>, String> {
+    require_hr_admin()?;
+    crate::payroll::periods(&rusqlite::Connection::open(db.path()).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub fn payroll_update(
+    db: State<'_, Database>,
+    salary: crate::payroll::SalaryRecord,
+) -> Result<(), String> {
+    require_hr_admin()?;
+    crate::payroll::update(
+        &mut rusqlite::Connection::open(db.path()).map_err(|e| e.to_string())?,
+        &salary,
+        &now(),
+    )
+    .map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub fn payroll_process(
+    db: State<'_, Database>,
+    period: String,
+    processed_by: String,
+) -> Result<(), String> {
+    require_hr_admin()?;
+    crate::payroll::process(
+        &mut rusqlite::Connection::open(db.path()).map_err(|e| e.to_string())?,
+        &period,
+        &processed_by,
+        &now(),
+    )
+    .map_err(|e| e.to_string())
+}
+#[tauri::command]
+pub fn payroll_payslip(
+    db: State<'_, Database>,
+    salary_id: String,
+) -> Result<PayrollPayslip, String> {
+    let session = require_auth()?;
+    let conn = rusqlite::Connection::open(db.path()).map_err(|e| e.to_string())?;
+    let result=conn.query_row("SELECT s.id,s.employee_id,e.employee_number,e.first_name || ' ' || e.last_name,e.department,e.position,s.pay_period,s.base_salary,s.allowances,s.deductions,s.net_salary,s.status,p.processed_at,p.processed_by FROM salary_records s JOIN employees e ON e.id=s.employee_id LEFT JOIN payroll_periods p ON p.period=s.pay_period WHERE s.id=?",[&salary_id],|r|Ok(PayrollPayslip{salary_id:r.get(0)?,employee_id:r.get(1)?,employee_number:r.get(2)?,employee_name:r.get(3)?,department:r.get(4)?,position:r.get(5)?,pay_period:r.get(6)?,base_salary:r.get(7)?,allowances:r.get(8)?,deductions:r.get(9)?,gross_salary:r.get::<_,f64>(7)?+r.get::<_,f64>(8)?,net_salary:r.get(10)?,status:r.get(11)?,processed_at:r.get(12)?,processed_by:r.get(13)?})).map_err(|e|e.to_string())?;
+    if result.status != "processed" {
+        return Err(
+            "Payslip is available only after the payroll period has been processed and locked."
+                .into(),
+        );
+    }
+    if session.role != "hr_admin"
+        && session.employee_id.as_deref() != Some(result.employee_id.as_str())
+    {
+        return Err("You are not authorized to view this payslip.".into());
+    }
+    Ok(result)
+}
+#[tauri::command]
+pub fn turso_status() -> Result<crate::turso::TursoConfig, String> {
+    require_hr_admin()?;
+    crate::turso::status()
+}
+#[tauri::command]
+pub fn turso_save(request: TursoSaveRequest) -> Result<(), String> {
+    require_hr_admin()?;
+    crate::turso::save(&request.database_url, &request.auth_token)
+}
+#[tauri::command]
+pub fn turso_disconnect() -> Result<(), String> {
+    require_hr_admin()?;
+    crate::turso::clear()
+}
+#[tauri::command]
+pub async fn turso_test_connection() -> Result<String, String> {
+    require_hr_admin()?;
+    let (url, token) = crate::turso::credentials()?;
+    let remote = libsql::Builder::new_remote(url, token)
+        .build()
+        .await
+        .map_err(|e| format!("Turso connection failed: {e}"))?;
+    let conn = remote
+        .connect()
+        .map_err(|e| format!("Turso connection failed: {e}"))?;
+    conn.execute("SELECT 1", ())
+        .await
+        .map_err(|e| format!("Turso query failed: {e}"))?;
+    Ok("connected".into())
+}
+#[tauri::command]
+pub fn sync_status(db: State<'_, Database>) -> Result<crate::sync::SyncStatus, String> {
+    require_auth()?;
+    crate::sync::status(&db.path())
+}
+#[tauri::command]
+pub async fn sync_now(db: State<'_, Database>) -> Result<crate::sync::SyncStatus, String> {
+    require_hr_admin()?;
+    let (url, token) = crate::turso::credentials()?;
+    crate::sync::sync_once(&db.path(), url, token).await
+}
+#[tauri::command]
+pub fn backup_create(db: State<'_, Database>) -> Result<crate::backup::BackupInfo, String> {
+    require_hr_admin()?;
+    let dir = db
+        .path()
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .join("backups");
+    let result = crate::backup::create(&db.path(), &dir)?;
+    crate::backup::prune(&dir, 10)?;
+    Ok(result)
+}
+#[tauri::command]
+pub fn backup_list(db: State<'_, Database>) -> Result<Vec<crate::backup::BackupInfo>, String> {
+    require_hr_admin()?;
+    let dir = db
+        .path()
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .join("backups");
+    crate::backup::list(&dir)
+}
+#[tauri::command]
+pub fn database_integrity(db: State<'_, Database>) -> Result<String, String> {
+    require_hr_admin()?;
+    crate::backup::integrity(&db.path())
+}
+#[tauri::command]
+pub fn backup_restore(
+    db: State<'_, Database>,
+    backup_path: String,
+) -> Result<crate::backup::BackupInfo, String> {
+    require_hr_admin()?;
+    let p = std::path::PathBuf::from(backup_path);
+    crate::backup::restore(&db.path(), &p)
+}
+fn validate_password(password: &str) -> Result<(), String> {
+    if password.len() < 10 {
+        return Err("Password must be at least 10 characters long.".into());
+    }
+    if password
+        .chars()
+        .any(|c| c.is_whitespace() || c.is_control())
+    {
+        return Err("Password cannot contain whitespace or control characters.".into());
+    }
+    if !password.chars().any(|c| c.is_ascii_uppercase()) {
+        return Err("Password must include an uppercase letter.".into());
+    }
+    if !password.chars().any(|c| c.is_ascii_lowercase()) {
+        return Err("Password must include a lowercase letter.".into());
+    }
+    if !password.chars().any(|c| c.is_ascii_digit()) {
+        return Err("Password must include a number.".into());
+    }
+    if !password.chars().any(|c| !c.is_ascii_alphanumeric()) {
+        return Err("Password must include a special character.".into());
+    }
+    Ok(())
+}
+fn hash_password(password: &str) -> Result<String, String> {
+    let salt = SaltString::generate(&mut OsRng);
+    Ok(Argon2::default()
+        .hash_password(password.as_bytes(), &salt)
+        .map_err(|_| "Could not create password hash".to_string())?
+        .to_string())
+}
+fn now() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+        .to_string()
+}

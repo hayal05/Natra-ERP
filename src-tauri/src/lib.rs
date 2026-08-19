@@ -1,15 +1,15 @@
+mod attendance;
+mod autosync;
+mod backup;
 mod commands;
 mod db;
-mod attendance;
+mod employee_hardening;
 mod leave;
 mod leave_hardening;
 mod payroll;
+mod security;
 mod sync;
 mod turso;
-mod autosync;
-mod backup;
-mod security;
-mod employee_hardening;
 
 use tauri::Manager;
 
@@ -17,7 +17,9 @@ use tauri::Manager;
 pub fn run() {
     let result = tauri::Builder::default()
         .setup(|app| {
-            let app_data = app.path().app_data_dir()
+            let app_data = app
+                .path()
+                .app_data_dir()
                 .map_err(|e| format!("NATRA ERP app data directory unavailable: {e}"))?;
             let database = db::Database::open(&app_data)
                 .map_err(|e| format!("NATRA ERP SQLite initialization failed: {e}"))?;

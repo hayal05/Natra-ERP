@@ -2,44 +2,298 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct SalaryRecord { pub id:String, pub employee_id:String, pub pay_period:String, pub base_salary:f64, pub allowances:f64, pub deductions:f64, pub net_salary:f64, pub status:String }
+pub struct SalaryRecord {
+    pub id: String,
+    pub employee_id: String,
+    pub pay_period: String,
+    pub base_salary: f64,
+    pub allowances: f64,
+    pub deductions: f64,
+    pub net_salary: f64,
+    pub status: String,
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct PayrollPeriod { pub id:String, pub period:String, pub status:String, pub processed_at:Option<String>, pub processed_by:Option<String> }
-
-fn valid_period(p:&str)->bool {
-    let b=p.as_bytes();
-    if b.len()!=7 || b[4]!=b'-' || !b[..4].iter().all(u8::is_ascii_digit) || !b[5..7].iter().all(u8::is_ascii_digit) { return false; }
-    let month=(b[5]-b'0')*10+(b[6]-b'0');
-    month>=1 && month<=12
+pub struct PayrollPeriod {
+    pub id: String,
+    pub period: String,
+    pub status: String,
+    pub processed_at: Option<String>,
+    pub processed_by: Option<String>,
 }
-fn valid_status(s:&str)->bool { matches!(s.trim().to_ascii_lowercase().as_str(), "draft"|"processed"|"locked") }
-fn validate_salary(s:&SalaryRecord)->Result<(),rusqlite::Error>{
-    if s.id.trim().is_empty(){return Err(rusqlite::Error::InvalidParameterName("salary record id is required".into()))}
-    if s.employee_id.trim().is_empty(){return Err(rusqlite::Error::InvalidParameterName("employee is required".into()))}
-    if !valid_period(&s.pay_period){return Err(rusqlite::Error::InvalidParameterName("pay period must be YYYY-MM".into()))}
-    if !s.base_salary.is_finite()||!s.allowances.is_finite()||!s.deductions.is_finite(){return Err(rusqlite::Error::InvalidParameterName("salary values must be finite".into()))}
-    if s.base_salary<0.0||s.allowances<0.0||s.deductions<0.0{return Err(rusqlite::Error::InvalidParameterName("salary values cannot be negative".into()))}
-    let gross=s.base_salary+s.allowances;
-    let net=gross-s.deductions;
-    if !gross.is_finite()||!net.is_finite(){return Err(rusqlite::Error::InvalidParameterName("salary calculation overflow".into()))}
-    if s.deductions>gross{return Err(rusqlite::Error::InvalidParameterName("deductions cannot exceed gross salary".into()))}
-    if !valid_status(&s.status){return Err(rusqlite::Error::InvalidParameterName("invalid payroll status".into()))}
+
+fn valid_period(p: &str) -> bool {
+    let b = p.as_bytes();
+    if b.len() != 7
+        || b[4] != b'-'
+        || !b[..4].iter().all(u8::is_ascii_digit)
+        || !b[5..7].iter().all(u8::is_ascii_digit)
+    {
+        return false;
+    }
+    let month = (b[5] - b'0') * 10 + (b[6] - b'0');
+    month >= 1 && month <= 12
+}
+fn valid_status(s: &str) -> bool {
+    matches!(
+        s.trim().to_ascii_lowercase().as_str(),
+        "draft" | "processed" | "locked"
+    )
+}
+fn validate_salary(s: &SalaryRecord) -> Result<(), rusqlite::Error> {
+    if s.id.trim().is_empty() {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "salary record id is required".into(),
+        ));
+    }
+    if s.employee_id.trim().is_empty() {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "employee is required".into(),
+        ));
+    }
+    if !valid_period(&s.pay_period) {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "pay period must be YYYY-MM".into(),
+        ));
+    }
+    if !s.base_salary.is_finite() || !s.allowances.is_finite() || !s.deductions.is_finite() {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "salary values must be finite".into(),
+        ));
+    }
+    if s.base_salary < 0.0 || s.allowances < 0.0 || s.deductions < 0.0 {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "salary values cannot be negative".into(),
+        ));
+    }
+    let gross = s.base_salary + s.allowances;
+    let net = gross - s.deductions;
+    if !gross.is_finite() || !net.is_finite() {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "salary calculation overflow".into(),
+        ));
+    }
+    if s.deductions > gross {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "deductions cannot exceed gross salary".into(),
+        ));
+    }
+    if !valid_status(&s.status) {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "invalid payroll status".into(),
+        ));
+    }
     Ok(())
 }
 
-pub fn migrate(c:&Connection)->Result<(),rusqlite::Error>{c.execute_batch("CREATE TABLE IF NOT EXISTS salary_records(id TEXT PRIMARY KEY,employee_id TEXT NOT NULL REFERENCES employees(id),pay_period TEXT NOT NULL,base_salary REAL NOT NULL DEFAULT 0,allowances REAL NOT NULL DEFAULT 0,deductions REAL NOT NULL DEFAULT 0,net_salary REAL NOT NULL DEFAULT 0,status TEXT NOT NULL DEFAULT 'draft',created_at TEXT NOT NULL,updated_at TEXT NOT NULL,UNIQUE(employee_id,pay_period)); CREATE TABLE IF NOT EXISTS payroll_periods(id TEXT PRIMARY KEY,period TEXT NOT NULL UNIQUE,status TEXT NOT NULL DEFAULT 'draft',processed_at TEXT,processed_by TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL); CREATE INDEX IF NOT EXISTS idx_salary_period ON salary_records(pay_period); CREATE INDEX IF NOT EXISTS idx_salary_employee ON salary_records(employee_id); CREATE TRIGGER IF NOT EXISTS trg_salary_integrity_insert BEFORE INSERT ON salary_records BEGIN SELECT CASE WHEN base_salary < 0 OR allowances < 0 OR deductions < 0 THEN RAISE(ABORT,'salary values cannot be negative') END; SELECT CASE WHEN deductions > base_salary + allowances THEN RAISE(ABORT,'deductions cannot exceed gross salary') END; SELECT CASE WHEN status NOT IN ('draft','processed','locked') THEN RAISE(ABORT,'invalid payroll status') END; END; CREATE TRIGGER IF NOT EXISTS trg_salary_integrity_update BEFORE UPDATE ON salary_records BEGIN SELECT CASE WHEN base_salary < 0 OR allowances < 0 OR deductions < 0 THEN RAISE(ABORT,'salary values cannot be negative') END; SELECT CASE WHEN deductions > base_salary + allowances THEN RAISE(ABORT,'deductions cannot exceed gross salary') END; SELECT CASE WHEN status NOT IN ('draft','processed','locked') THEN RAISE(ABORT,'invalid payroll status') END; END; CREATE TRIGGER IF NOT EXISTS trg_period_integrity_insert BEFORE INSERT ON payroll_periods BEGIN SELECT CASE WHEN status NOT IN ('draft','processed','locked') THEN RAISE(ABORT,'invalid payroll period status') END; END; CREATE TRIGGER IF NOT EXISTS trg_period_integrity_update BEFORE UPDATE ON payroll_periods BEGIN SELECT CASE WHEN status NOT IN ('draft','processed','locked') THEN RAISE(ABORT,'invalid payroll period status') END; END;")}
+pub fn migrate(c: &Connection) -> Result<(), rusqlite::Error> {
+    c.execute_batch("CREATE TABLE IF NOT EXISTS salary_records(id TEXT PRIMARY KEY,employee_id TEXT NOT NULL REFERENCES employees(id),pay_period TEXT NOT NULL,base_salary REAL NOT NULL DEFAULT 0,allowances REAL NOT NULL DEFAULT 0,deductions REAL NOT NULL DEFAULT 0,net_salary REAL NOT NULL DEFAULT 0,status TEXT NOT NULL DEFAULT 'draft',created_at TEXT NOT NULL,updated_at TEXT NOT NULL,UNIQUE(employee_id,pay_period)); CREATE TABLE IF NOT EXISTS payroll_periods(id TEXT PRIMARY KEY,period TEXT NOT NULL UNIQUE,status TEXT NOT NULL DEFAULT 'draft',processed_at TEXT,processed_by TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL); CREATE INDEX IF NOT EXISTS idx_salary_period ON salary_records(pay_period); CREATE INDEX IF NOT EXISTS idx_salary_employee ON salary_records(employee_id); CREATE TRIGGER IF NOT EXISTS trg_salary_integrity_insert BEFORE INSERT ON salary_records BEGIN SELECT CASE WHEN base_salary < 0 OR allowances < 0 OR deductions < 0 THEN RAISE(ABORT,'salary values cannot be negative') END; SELECT CASE WHEN deductions > base_salary + allowances THEN RAISE(ABORT,'deductions cannot exceed gross salary') END; SELECT CASE WHEN status NOT IN ('draft','processed','locked') THEN RAISE(ABORT,'invalid payroll status') END; END; CREATE TRIGGER IF NOT EXISTS trg_salary_integrity_update BEFORE UPDATE ON salary_records BEGIN SELECT CASE WHEN base_salary < 0 OR allowances < 0 OR deductions < 0 THEN RAISE(ABORT,'salary values cannot be negative') END; SELECT CASE WHEN deductions > base_salary + allowances THEN RAISE(ABORT,'deductions cannot exceed gross salary') END; SELECT CASE WHEN status NOT IN ('draft','processed','locked') THEN RAISE(ABORT,'invalid payroll status') END; END; CREATE TRIGGER IF NOT EXISTS trg_period_integrity_insert BEFORE INSERT ON payroll_periods BEGIN SELECT CASE WHEN status NOT IN ('draft','processed','locked') THEN RAISE(ABORT,'invalid payroll period status') END; END; CREATE TRIGGER IF NOT EXISTS trg_period_integrity_update BEFORE UPDATE ON payroll_periods BEGIN SELECT CASE WHEN status NOT IN ('draft','processed','locked') THEN RAISE(ABORT,'invalid payroll period status') END; END;")
+}
 
-pub fn create(c:&mut Connection,s:&SalaryRecord,now:&str)->Result<(),rusqlite::Error>{validate_salary(s)?;let tx=c.transaction()?;let active:i64=tx.query_row("SELECT COUNT(*) FROM employees WHERE id=? AND lower(status)='active'",[&s.employee_id],|r|r.get(0))?;if active==0{return Err(rusqlite::Error::InvalidParameterName("employee is missing or inactive".into()))}ensure_open_period(&tx,&s.pay_period,now)?;tx.execute("INSERT INTO salary_records(id,employee_id,pay_period,base_salary,allowances,deductions,net_salary,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",params![s.id,s.employee_id,s.pay_period,s.base_salary,s.allowances,s.deductions,s.base_salary+s.allowances-s.deductions,"draft",now,now])?;queue(&tx,s,now)?;queue_period(&tx,&s.pay_period,now)?;tx.commit()}
+pub fn create(c: &mut Connection, s: &SalaryRecord, now: &str) -> Result<(), rusqlite::Error> {
+    validate_salary(s)?;
+    let tx = c.transaction()?;
+    let active: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM employees WHERE id=? AND lower(status)='active'",
+        [&s.employee_id],
+        |r| r.get(0),
+    )?;
+    if active == 0 {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "employee is missing or inactive".into(),
+        ));
+    }
+    ensure_open_period(&tx, &s.pay_period, now)?;
+    tx.execute("INSERT INTO salary_records(id,employee_id,pay_period,base_salary,allowances,deductions,net_salary,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",params![s.id,s.employee_id,s.pay_period,s.base_salary,s.allowances,s.deductions,s.base_salary+s.allowances-s.deductions,"draft",now,now])?;
+    queue(&tx, s, now)?;
+    queue_period(&tx, &s.pay_period, now)?;
+    tx.commit()
+}
 
-pub fn list(c:&Connection,pay_period:Option<&str>)->Result<Vec<SalaryRecord>,rusqlite::Error>{let mut out=Vec::new();if let Some(p)=pay_period{if !valid_period(p){return Err(rusqlite::Error::InvalidParameterName("pay period must be YYYY-MM".into()))}let mut q=c.prepare("SELECT id,employee_id,pay_period,base_salary,allowances,deductions,net_salary,status FROM salary_records WHERE pay_period=? ORDER BY employee_id")?;for r in q.query_map([p],row)?{out.push(r?)}}else{let mut q=c.prepare("SELECT id,employee_id,pay_period,base_salary,allowances,deductions,net_salary,status FROM salary_records ORDER BY pay_period DESC,employee_id")?;for r in q.query_map([],row)?{out.push(r?)}}Ok(out)}
+pub fn list(
+    c: &Connection,
+    pay_period: Option<&str>,
+) -> Result<Vec<SalaryRecord>, rusqlite::Error> {
+    let mut out = Vec::new();
+    if let Some(p) = pay_period {
+        if !valid_period(p) {
+            return Err(rusqlite::Error::InvalidParameterName(
+                "pay period must be YYYY-MM".into(),
+            ));
+        }
+        let mut q=c.prepare("SELECT id,employee_id,pay_period,base_salary,allowances,deductions,net_salary,status FROM salary_records WHERE pay_period=? ORDER BY employee_id")?;
+        for r in q.query_map([p], row)? {
+            out.push(r?)
+        }
+    } else {
+        let mut q=c.prepare("SELECT id,employee_id,pay_period,base_salary,allowances,deductions,net_salary,status FROM salary_records ORDER BY pay_period DESC,employee_id")?;
+        for r in q.query_map([], row)? {
+            out.push(r?)
+        }
+    }
+    Ok(out)
+}
 
-pub fn update(c:&mut Connection,s:&SalaryRecord,now:&str)->Result<(),rusqlite::Error>{validate_salary(s)?;let tx=c.transaction()?;let active:i64=tx.query_row("SELECT COUNT(*) FROM employees WHERE id=? AND lower(status)='active'",[&s.employee_id],|r|r.get(0))?;if active==0{return Err(rusqlite::Error::InvalidParameterName("employee is missing or inactive".into()))}let open:i64=tx.query_row("SELECT COUNT(*) FROM payroll_periods WHERE period=? AND status='draft'",[&s.pay_period],|r|r.get(0))?;if open==0{return Err(rusqlite::Error::InvalidParameterName("payroll period is locked, processed, or missing".into()))}let n=tx.execute("UPDATE salary_records SET employee_id=?,pay_period=?,base_salary=?,allowances=?,deductions=?,net_salary=?,status=?,updated_at=? WHERE id=? AND status='draft'",params![s.employee_id,s.pay_period,s.base_salary,s.allowances,s.deductions,s.base_salary+s.allowances-s.deductions,"draft",now,s.id])?;if n==0{return Err(rusqlite::Error::QueryReturnedNoRows)}queue(&tx,s,now)?;queue_period(&tx,&s.pay_period,now)?;tx.commit()}
+pub fn update(c: &mut Connection, s: &SalaryRecord, now: &str) -> Result<(), rusqlite::Error> {
+    validate_salary(s)?;
+    let tx = c.transaction()?;
+    let active: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM employees WHERE id=? AND lower(status)='active'",
+        [&s.employee_id],
+        |r| r.get(0),
+    )?;
+    if active == 0 {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "employee is missing or inactive".into(),
+        ));
+    }
+    let open: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM payroll_periods WHERE period=? AND status='draft'",
+        [&s.pay_period],
+        |r| r.get(0),
+    )?;
+    if open == 0 {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "payroll period is locked, processed, or missing".into(),
+        ));
+    }
+    let n=tx.execute("UPDATE salary_records SET employee_id=?,pay_period=?,base_salary=?,allowances=?,deductions=?,net_salary=?,status=?,updated_at=? WHERE id=? AND status='draft'",params![s.employee_id,s.pay_period,s.base_salary,s.allowances,s.deductions,s.base_salary+s.allowances-s.deductions,"draft",now,s.id])?;
+    if n == 0 {
+        return Err(rusqlite::Error::QueryReturnedNoRows);
+    }
+    queue(&tx, s, now)?;
+    queue_period(&tx, &s.pay_period, now)?;
+    tx.commit()
+}
 
-pub fn period(c:&Connection,p:&str)->Result<PayrollPeriod,rusqlite::Error>{if !valid_period(p){return Err(rusqlite::Error::InvalidParameterName("pay period must be YYYY-MM".into()))}c.query_row("SELECT id,period,status,processed_at,processed_by FROM payroll_periods WHERE period=?",[p],|r|Ok(PayrollPeriod{id:r.get(0)?,period:r.get(1)?,status:r.get(2)?,processed_at:r.get(3)?,processed_by:r.get(4)?}))}
-pub fn periods(c:&Connection)->Result<Vec<PayrollPeriod>,rusqlite::Error>{let mut s=c.prepare("SELECT id,period,status,processed_at,processed_by FROM payroll_periods ORDER BY period DESC")?;let rows=s.query_map([],|r|Ok(PayrollPeriod{id:r.get(0)?,period:r.get(1)?,status:r.get(2)?,processed_at:r.get(3)?,processed_by:r.get(4)?}))?;rows.collect()}
-pub fn process(c:&mut Connection,p:&str,by:&str,now:&str)->Result<(),rusqlite::Error>{if !valid_period(p){return Err(rusqlite::Error::InvalidParameterName("payroll period must be YYYY-MM".into()))}if by.trim().is_empty(){return Err(rusqlite::Error::InvalidParameterName("processor is required".into()))}let tx=c.transaction()?;let status:String=tx.query_row("SELECT status FROM payroll_periods WHERE period=?",[p],|r|r.get(0))?;if status!="draft"{return Err(rusqlite::Error::InvalidParameterName("only a draft payroll period can be processed".into()))}let count:i64=tx.query_row("SELECT COUNT(*) FROM salary_records WHERE pay_period=? AND status='draft'",[p],|r|r.get(0))?;if count==0{return Err(rusqlite::Error::InvalidParameterName("cannot process an empty payroll period".into()))}tx.execute("UPDATE salary_records SET net_salary=base_salary+allowances-deductions,status='processed',updated_at=? WHERE pay_period=? AND status='draft'",params![now,p])?;let n=tx.execute("UPDATE payroll_periods SET status='locked',processed_at=?,processed_by=?,updated_at=? WHERE period=? AND status='draft'",params![now,by,now,p])?;if n==0{return Err(rusqlite::Error::QueryReturnedNoRows)}let records={let mut q=tx.prepare("SELECT id,employee_id,pay_period,base_salary,allowances,deductions,net_salary,status FROM salary_records WHERE pay_period=?")?;let x=q.query_map([p],row)?.collect::<Result<Vec<_>,_>>()?;x};for item in records{queue(&tx,&item,now)?;}queue_period(&tx,p,now)?;tx.commit()}
-pub fn ensure_open_period(c:&Connection,p:&str,now:&str)->Result<(),rusqlite::Error>{if !valid_period(p){return Err(rusqlite::Error::InvalidParameterName("payroll period must be YYYY-MM".into()))}c.execute("INSERT INTO payroll_periods(id,period,status,created_at,updated_at) VALUES(?,?, 'draft',?,?) ON CONFLICT(period) DO NOTHING",params![format!("period-{}",p),p,now,now])?;let status:String=c.query_row("SELECT status FROM payroll_periods WHERE period=?",[p],|r|r.get(0))?;if status!="draft"{return Err(rusqlite::Error::InvalidParameterName("payroll period is already processed or locked".into()))}Ok(())}
-fn queue(tx:&rusqlite::Transaction<'_>,s:&SalaryRecord,now:&str)->Result<(),rusqlite::Error>{let payload=serde_json::to_string(s).unwrap_or_default();tx.execute("INSERT INTO sync_outbox(id,operation,entity,entity_id,payload,created_at) VALUES(?, 'upsert','salary',?,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,created_at=excluded.created_at,last_error=NULL",params![format!("sync-salary-{}",s.id),s.id,payload,now])?;Ok(())}
-fn queue_period(tx:&rusqlite::Transaction<'_>,p:&str,now:&str)->Result<(),rusqlite::Error>{let row:(String,String,String,Option<String>,Option<String>)=tx.query_row("SELECT id,period,status,processed_at,processed_by FROM payroll_periods WHERE period=?",[p],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?)))?;let payload=serde_json::json!({"id":row.0,"period":row.1,"status":row.2,"processed_at":row.3,"processed_by":row.4,"updated_at":now});tx.execute("INSERT INTO sync_outbox(id,operation,entity,entity_id,payload,created_at) VALUES(?, 'upsert','payroll_period',?,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,created_at=excluded.created_at,last_error=NULL",params![format!("sync-payroll-period-{}",p),format!("period-{}",p),payload.to_string(),now])?;Ok(())}
-fn row(r:&rusqlite::Row<'_>)->Result<SalaryRecord,rusqlite::Error>{Ok(SalaryRecord{id:r.get(0)?,employee_id:r.get(1)?,pay_period:r.get(2)?,base_salary:r.get(3)?,allowances:r.get(4)?,deductions:r.get(5)?,net_salary:r.get(6)?,status:r.get(7)?})}
+pub fn period(c: &Connection, p: &str) -> Result<PayrollPeriod, rusqlite::Error> {
+    if !valid_period(p) {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "pay period must be YYYY-MM".into(),
+        ));
+    }
+    c.query_row(
+        "SELECT id,period,status,processed_at,processed_by FROM payroll_periods WHERE period=?",
+        [p],
+        |r| {
+            Ok(PayrollPeriod {
+                id: r.get(0)?,
+                period: r.get(1)?,
+                status: r.get(2)?,
+                processed_at: r.get(3)?,
+                processed_by: r.get(4)?,
+            })
+        },
+    )
+}
+pub fn periods(c: &Connection) -> Result<Vec<PayrollPeriod>, rusqlite::Error> {
+    let mut s=c.prepare("SELECT id,period,status,processed_at,processed_by FROM payroll_periods ORDER BY period DESC")?;
+    let rows = s.query_map([], |r| {
+        Ok(PayrollPeriod {
+            id: r.get(0)?,
+            period: r.get(1)?,
+            status: r.get(2)?,
+            processed_at: r.get(3)?,
+            processed_by: r.get(4)?,
+        })
+    })?;
+    rows.collect()
+}
+pub fn process(c: &mut Connection, p: &str, by: &str, now: &str) -> Result<(), rusqlite::Error> {
+    if !valid_period(p) {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "payroll period must be YYYY-MM".into(),
+        ));
+    }
+    if by.trim().is_empty() {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "processor is required".into(),
+        ));
+    }
+    let tx = c.transaction()?;
+    let status: String = tx.query_row(
+        "SELECT status FROM payroll_periods WHERE period=?",
+        [p],
+        |r| r.get(0),
+    )?;
+    if status != "draft" {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "only a draft payroll period can be processed".into(),
+        ));
+    }
+    let count: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM salary_records WHERE pay_period=? AND status='draft'",
+        [p],
+        |r| r.get(0),
+    )?;
+    if count == 0 {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "cannot process an empty payroll period".into(),
+        ));
+    }
+    tx.execute("UPDATE salary_records SET net_salary=base_salary+allowances-deductions,status='processed',updated_at=? WHERE pay_period=? AND status='draft'",params![now,p])?;
+    let n=tx.execute("UPDATE payroll_periods SET status='locked',processed_at=?,processed_by=?,updated_at=? WHERE period=? AND status='draft'",params![now,by,now,p])?;
+    if n == 0 {
+        return Err(rusqlite::Error::QueryReturnedNoRows);
+    }
+    let records = {
+        let mut q=tx.prepare("SELECT id,employee_id,pay_period,base_salary,allowances,deductions,net_salary,status FROM salary_records WHERE pay_period=?")?;
+        let x = q.query_map([p], row)?.collect::<Result<Vec<_>, _>>()?;
+        x
+    };
+    for item in records {
+        queue(&tx, &item, now)?;
+    }
+    queue_period(&tx, p, now)?;
+    tx.commit()
+}
+pub fn ensure_open_period(c: &Connection, p: &str, now: &str) -> Result<(), rusqlite::Error> {
+    if !valid_period(p) {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "payroll period must be YYYY-MM".into(),
+        ));
+    }
+    c.execute("INSERT INTO payroll_periods(id,period,status,created_at,updated_at) VALUES(?,?, 'draft',?,?) ON CONFLICT(period) DO NOTHING",params![format!("period-{}",p),p,now,now])?;
+    let status: String = c.query_row(
+        "SELECT status FROM payroll_periods WHERE period=?",
+        [p],
+        |r| r.get(0),
+    )?;
+    if status != "draft" {
+        return Err(rusqlite::Error::InvalidParameterName(
+            "payroll period is already processed or locked".into(),
+        ));
+    }
+    Ok(())
+}
+fn queue(
+    tx: &rusqlite::Transaction<'_>,
+    s: &SalaryRecord,
+    now: &str,
+) -> Result<(), rusqlite::Error> {
+    let payload = serde_json::to_string(s).unwrap_or_default();
+    tx.execute("INSERT INTO sync_outbox(id,operation,entity,entity_id,payload,created_at) VALUES(?, 'upsert','salary',?,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,created_at=excluded.created_at,last_error=NULL",params![format!("sync-salary-{}",s.id),s.id,payload,now])?;
+    Ok(())
+}
+fn queue_period(tx: &rusqlite::Transaction<'_>, p: &str, now: &str) -> Result<(), rusqlite::Error> {
+    let row: (String, String, String, Option<String>, Option<String>) = tx.query_row(
+        "SELECT id,period,status,processed_at,processed_by FROM payroll_periods WHERE period=?",
+        [p],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+    )?;
+    let payload = serde_json::json!({"id":row.0,"period":row.1,"status":row.2,"processed_at":row.3,"processed_by":row.4,"updated_at":now});
+    tx.execute("INSERT INTO sync_outbox(id,operation,entity,entity_id,payload,created_at) VALUES(?, 'upsert','payroll_period',?,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,created_at=excluded.created_at,last_error=NULL",params![format!("sync-payroll-period-{}",p),format!("period-{}",p),payload.to_string(),now])?;
+    Ok(())
+}
+fn row(r: &rusqlite::Row<'_>) -> Result<SalaryRecord, rusqlite::Error> {
+    Ok(SalaryRecord {
+        id: r.get(0)?,
+        employee_id: r.get(1)?,
+        pay_period: r.get(2)?,
+        base_salary: r.get(3)?,
+        allowances: r.get(4)?,
+        deductions: r.get(5)?,
+        net_salary: r.get(6)?,
+        status: r.get(7)?,
+    })
+}

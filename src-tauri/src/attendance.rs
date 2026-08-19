@@ -28,7 +28,8 @@ pub struct AttendanceSummary {
 
 fn connect(path: &Path) -> Result<Connection, String> {
     let c = Connection::open(path).map_err(|e| e.to_string())?;
-    c.pragma_update(None, "foreign_keys", "ON").map_err(|e| e.to_string())?;
+    c.pragma_update(None, "foreign_keys", "ON")
+        .map_err(|e| e.to_string())?;
     Ok(c)
 }
 
@@ -37,7 +38,11 @@ fn valid_date(value: &str) -> bool {
     if b.len() != 10 || b[4] != b'-' || b[7] != b'-' {
         return false;
     }
-    if !b.iter().enumerate().all(|(i, x)| matches!(i, 4 | 7) || x.is_ascii_digit()) {
+    if !b
+        .iter()
+        .enumerate()
+        .all(|(i, x)| matches!(i, 4 | 7) || x.is_ascii_digit())
+    {
         return false;
     }
     let month = u32::from(b[5] - b'0') * 10 + u32::from(b[6] - b'0');
@@ -47,20 +52,32 @@ fn valid_date(value: &str) -> bool {
 
 fn valid_id(value: &str) -> bool {
     let v = value.trim();
-    !v.is_empty() && v.len() <= 128 && v.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    !v.is_empty()
+        && v.len() <= 128
+        && v.chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
 fn validate_range(from_date: &str, to_date: &str) -> Result<(), String> {
     if !valid_date(from_date) || !valid_date(to_date) || from_date > to_date {
-        return Err("Invalid attendance date range. Use YYYY-MM-DD with a valid month and day.".into());
+        return Err(
+            "Invalid attendance date range. Use YYYY-MM-DD with a valid month and day.".into(),
+        );
     }
     Ok(())
 }
 
-pub fn history(path: &Path, employee_id: Option<&str>, from_date: &str, to_date: &str) -> Result<Vec<AttendanceHistoryRow>, String> {
+pub fn history(
+    path: &Path,
+    employee_id: Option<&str>,
+    from_date: &str,
+    to_date: &str,
+) -> Result<Vec<AttendanceHistoryRow>, String> {
     validate_range(from_date, to_date)?;
     if let Some(id) = employee_id {
-        if !valid_id(id) { return Err("Invalid employee ID.".into()); }
+        if !valid_id(id) {
+            return Err("Invalid employee ID.".into());
+        }
     }
     let c = connect(path)?;
     let mut stmt = c.prepare(
@@ -69,17 +86,35 @@ pub fn history(path: &Path, employee_id: Option<&str>, from_date: &str, to_date:
          WHERE a.attendance_date BETWEEN ? AND ? AND (? IS NULL OR a.employee_id=?)
          ORDER BY a.attendance_date DESC,a.check_in_at DESC"
     ).map_err(|e| e.to_string())?;
-    let rows = stmt.query_map(params![from_date,to_date,employee_id,employee_id], |r| Ok(AttendanceHistoryRow {
-        id:r.get(0)?, employee_id:r.get(1)?, employee_name:r.get(2)?, department:r.get(3)?,
-        attendance_date:r.get(4)?, check_in_at:r.get(5)?, status:r.get(6)?, token_id:r.get(7)?
-    })).map_err(|e| e.to_string())?;
-    rows.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())
+    let rows = stmt
+        .query_map(params![from_date, to_date, employee_id, employee_id], |r| {
+            Ok(AttendanceHistoryRow {
+                id: r.get(0)?,
+                employee_id: r.get(1)?,
+                employee_name: r.get(2)?,
+                department: r.get(3)?,
+                attendance_date: r.get(4)?,
+                check_in_at: r.get(5)?,
+                status: r.get(6)?,
+                token_id: r.get(7)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
 }
 
-pub fn summary(path: &Path, employee_id: Option<&str>, from_date: &str, to_date: &str) -> Result<AttendanceSummary, String> {
+pub fn summary(
+    path: &Path,
+    employee_id: Option<&str>,
+    from_date: &str,
+    to_date: &str,
+) -> Result<AttendanceSummary, String> {
     validate_range(from_date, to_date)?;
     if let Some(id) = employee_id {
-        if !valid_id(id) { return Err("Invalid employee ID.".into()); }
+        if !valid_id(id) {
+            return Err("Invalid employee ID.".into());
+        }
     }
     let c = connect(path)?;
     let row = c.query_row(
@@ -88,25 +123,46 @@ pub fn summary(path: &Path, employee_id: Option<&str>, from_date: &str, to_date:
         params![from_date,to_date,employee_id,employee_id],
         |r| Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?,r.get::<_,i64>(2)?,r.get::<_,Option<String>>(3)?,r.get::<_,Option<String>>(4)?))
     ).map_err(|e| e.to_string())?;
-    Ok(AttendanceSummary { employee_id:employee_id.map(str::to_owned), from_date:from_date.into(), to_date:to_date.into(), recorded_days:row.0, present_days:row.1, late_days:row.2, first_check_in:row.3, last_check_in:row.4 })
+    Ok(AttendanceSummary {
+        employee_id: employee_id.map(str::to_owned),
+        from_date: from_date.into(),
+        to_date: to_date.into(),
+        recorded_days: row.0,
+        present_days: row.1,
+        late_days: row.2,
+        first_check_in: row.3,
+        last_check_in: row.4,
+    })
 }
 
 pub fn delete(path: &Path, attendance_id: &str) -> Result<(), String> {
-    if !valid_id(attendance_id) { return Err("Valid attendance record ID is required.".into()); }
+    if !valid_id(attendance_id) {
+        return Err("Valid attendance record ID is required.".into());
+    }
     let mut c = connect(path)?;
     let tx = c.transaction().map_err(|e| e.to_string())?;
-    let exists: Option<(String,String,String)> = tx.query_row(
-        "SELECT id,attendance_date,status FROM attendance WHERE id=?",
-        [attendance_id.trim()],
-        |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?))
-    ).optional().map_err(|e| e.to_string())?;
+    let exists: Option<(String, String, String)> = tx
+        .query_row(
+            "SELECT id,attendance_date,status FROM attendance WHERE id=?",
+            [attendance_id.trim()],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
     let (_, date, status) = exists.ok_or_else(|| "Attendance record not found.".to_string())?;
-    if !valid_date(&date) { return Err("Attendance record has an invalid date and cannot be safely deleted.".into()); }
+    if !valid_date(&date) {
+        return Err("Attendance record has an invalid date and cannot be safely deleted.".into());
+    }
     if !matches!(status.as_str(), "present" | "late" | "absent") {
         return Err("Attendance record has an invalid status and cannot be safely deleted.".into());
     }
-    tx.execute("DELETE FROM attendance WHERE id=?", [attendance_id.trim()]).map_err(|e| e.to_string())?;
-    tx.execute("DELETE FROM sync_outbox WHERE entity='attendance' AND entity_id=?", [attendance_id.trim()]).map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM attendance WHERE id=?", [attendance_id.trim()])
+        .map_err(|e| e.to_string())?;
+    tx.execute(
+        "DELETE FROM sync_outbox WHERE entity='attendance' AND entity_id=?",
+        [attendance_id.trim()],
+    )
+    .map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
     Ok(())
 }
