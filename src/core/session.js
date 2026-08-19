@@ -6,4 +6,4 @@ export function setSession(user){memory=user;sessionStorage.setItem(KEY,JSON.str
 export function getSession(){if(memory){showPasswordGate(memory);return memory}try{memory=JSON.parse(sessionStorage.getItem(KEY)||'null');showPasswordGate(memory);return memory}catch{return null}}
 export function clearSession(){memory=null;sessionStorage.removeItem(KEY);passwordGateShown=false;}
 export function requireRole(role){const s=getSession();if(!s||s.role!==role)throw new Error('UNAUTHORIZED');return s;}
-export function canAccess(role,page){const map={'HR Admin':new Set(['Dashboard','Employees','Attendance','Leave','Payroll','Documents','Reports']),Employee:new Set(['Dashboard','Attendance','Leave','Documents'])};return !!map[role]?.has(page);}
+export function canAccess(role,page){const map={'HR Admin':new Set(['Dashboard','Employees','Attendance','Leave','Payroll','Documents','Reports','Settings']),Employee:new Set(['Dashboard','Attendance','Leave','Documents'])};return !!map[role]?.has(page);}
