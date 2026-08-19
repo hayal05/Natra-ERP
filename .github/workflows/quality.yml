@@ -38,12 +38,6 @@ jobs:
         with:
           components: rustfmt,clippy
 
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ./src-tauri -> target
-          cache-target: false
-
       - name: Format check
         working-directory: src-tauri
         run: cargo fmt --all -- --check
