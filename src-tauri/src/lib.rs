@@ -7,6 +7,7 @@ mod sync;
 mod turso;
 mod autosync;
 mod backup;
+mod security;
 
 use tauri::Manager;
 
