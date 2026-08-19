@@ -4,17 +4,41 @@ use serde::{Deserialize, Serialize};
 const SERVICE: &str = "NATRA-ERP-TURSO";
 const ACCOUNT_URL: &str = "database_url";
 const ACCOUNT_TOKEN: &str = "auth_token";
+const MAX_URL_LEN: usize = 512;
+const MAX_TOKEN_LEN: usize = 16_384;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TursoConfig { pub database_url: String, pub configured: bool }
 
 fn entry(account: &str) -> Result<Entry, String> { Entry::new(SERVICE, account).map_err(|e| e.to_string()) }
 
+fn validate_url(url: &str) -> Result<String, String> {
+    let value = url.trim();
+    if value.is_empty() || value.len() > MAX_URL_LEN || value.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return Err("Invalid Turso database URL".into());
+    }
+    if !(value.starts_with("libsql://") || value.starts_with("https://")) {
+        return Err("Turso database URL must use libsql:// or https://".into());
+    }
+    Ok(value.to_string())
+}
+
+fn validate_token(token: &str) -> Result<String, String> {
+    let value = token.trim();
+    if value.is_empty() || value.len() > MAX_TOKEN_LEN || value.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return Err("Invalid Turso auth token".into());
+    }
+    Ok(value.to_string())
+}
+
 pub fn save(url: &str, token: &str) -> Result<(), String> {
-    if !url.starts_with("libsql://") && !url.starts_with("https://") { return Err("Invalid Turso database URL".into()); }
-    if token.trim().is_empty() { return Err("Turso auth token is required".into()); }
-    entry(ACCOUNT_URL)?.set_password(url.trim()).map_err(|e| e.to_string())?;
-    entry(ACCOUNT_TOKEN)?.set_password(token.trim()).map_err(|e| e.to_string())?;
+    let url = validate_url(url)?;
+    let token = validate_token(token)?;
+    entry(ACCOUNT_URL)?.set_password(&url).map_err(|e| e.to_string())?;
+    if let Err(error) = entry(ACCOUNT_TOKEN)?.set_password(&token) {
+        let _ = entry(ACCOUNT_URL)?.delete_credential();
+        return Err(error.to_string());
+    }
     Ok(())
 }
 
@@ -30,5 +54,8 @@ pub fn clear() -> Result<(), String> {
 }
 
 pub fn credentials() -> Result<(String, String), String> {
-    Ok((entry(ACCOUNT_URL)?.get_password().map_err(|e| e.to_string())?, entry(ACCOUNT_TOKEN)?.get_password().map_err(|e| e.to_string())?))
+    let url = entry(ACCOUNT_URL)?.get_password().map_err(|e| e.to_string())?;
+    let token = entry(ACCOUNT_TOKEN)?.get_password().map_err(|e| e.to_string())?;
+    if url.is_empty() || token.is_empty() { return Err("Turso credentials are incomplete.".into()); }
+    Ok((url, token))
 }
