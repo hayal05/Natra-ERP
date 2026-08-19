@@ -16,8 +16,8 @@ concurrency:
 
 jobs:
   rust:
-    name: Rust checks
-    runs-on: ubuntu-latest
+    name: Rust checks (Windows)
+    runs-on: windows-latest
     timeout-minutes: 30
     steps:
       - name: Checkout
@@ -30,25 +30,8 @@ jobs:
 
       - name: Generate Tauri icons
         working-directory: src-tauri
+        shell: pwsh
         run: npx --yes @tauri-apps/cli@2.11.4 icon app-icon.svg
-
-      - name: Install Linux system dependencies
-        run: |
-          # GitHub-hosted Ubuntu runners can occasionally have a slow regional
-          # Azure mirror. Use the public Ubuntu archive to avoid long apt stalls.
-          sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
-          sudo apt-get update -o Acquire::Retries=3
-          sudo apt-get install -y --no-install-recommends \
-            build-essential \
-            pkg-config \
-            libglib2.0-dev \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libxdo-dev \
-            libssl-dev \
-            patchelf
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -78,7 +61,7 @@ jobs:
 
   frontend:
     name: Frontend checks
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     timeout-minutes: 15
     steps:
       - name: Checkout
