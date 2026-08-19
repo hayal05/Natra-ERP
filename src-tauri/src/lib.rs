@@ -49,6 +49,7 @@ pub fn run() {
             commands::attendance_history,
             commands::attendance_summary,
             commands::attendance_delete,
+            commands::initialize_first_launch,
             commands::login,
             commands::change_password,
             commands::logout,

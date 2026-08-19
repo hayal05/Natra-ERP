@@ -7,7 +7,6 @@ use std::{
 use thiserror::Error;
 
 pub const DB_SCHEMA_VERSION: i32 = 12;
-const DEFAULT_ADMIN_PASSWORD_HASH: &str = "$argon2id$v=19$m=65536,t=3,p=4$nuDPZRiwVbRM7K+pXEXq5g$HzsV3AgEt2naxLZRhmwX4n6hEfP0XnNAYF05Lg/ALXY";
 
 #[derive(Debug, Error)]
 pub enum DbError {
@@ -140,37 +139,22 @@ impl Database {
             _ => {}
         }
 
-        let now = now_string();
-        tx.execute("INSERT OR IGNORE INTO users(id,username,password_hash,role,employee_id,active,must_change_password,created_at,updated_at) VALUES('admin','admin',?, 'hr_admin',NULL,1,1,?,?)", params![DEFAULT_ADMIN_PASSWORD_HASH, now, now])?;
-        if old_version < DB_SCHEMA_VERSION {
-            tx.execute("UPDATE users SET username='admin', password_hash=?, must_change_password=1, active=1, role='hr_admin', updated_at=? WHERE lower(username)='admin' AND must_change_password=1", params![DEFAULT_ADMIN_PASSWORD_HASH, now])?;
-        }
+        // No default credentials are ever created.
+        // A fresh database intentionally starts with zero users.
+        // If an old installation still contains the legacy bootstrap account
+        // (recognizable by must_change_password=1), remove only that account.
+        tx.execute(
+            "DELETE FROM users WHERE lower(username)=lower('admin') AND must_change_password=1",
+            [],
+        )?;
         tx.commit()?;
         Ok(())
     }
 
-    pub fn prepare_bootstrap_login(&self, username: &str, password: &str) -> Result<(), DbError> {
-        if !username.trim().eq_ignore_ascii_case("admin") || password != "Admin@123" {
-            return Ok(());
-        }
-        let mut c = self.connect()?;
-        let tx = c.transaction()?;
-        let now = now_string();
-        let row: Option<(String, bool, bool, String)> = tx.query_row(
-            "SELECT id,must_change_password,active,role FROM users WHERE lower(username)='admin' LIMIT 1",
-            [], |r| Ok((r.get(0)?, r.get::<_, i64>(1)? != 0, r.get::<_, i64>(2)? != 0, r.get(3)?))
-        ).optional()?;
-        match row {
-            None => {
-                tx.execute("INSERT INTO users(id,username,password_hash,role,employee_id,active,must_change_password,created_at,updated_at) VALUES('admin','admin',?,'hr_admin',NULL,1,1,?,?)", params![DEFAULT_ADMIN_PASSWORD_HASH, now, now])?;
-            }
-            Some((_, true, _, _)) => {
-                tx.execute("UPDATE users SET username='admin',password_hash=?,role='hr_admin',active=1,must_change_password=1,updated_at=? WHERE lower(username)='admin' AND must_change_password=1", params![DEFAULT_ADMIN_PASSWORD_HASH, now])?;
-            }
-            Some(_) => {}
-        }
-        tx.commit()?;
-        Ok(())
+    pub fn has_users(&self) -> Result<bool, DbError> {
+        let c = self.connect()?;
+        let count: i64 = c.query_row("SELECT COUNT(*) FROM users", [], |r| r.get(0))?;
+        Ok(count > 0)
     }
 
     fn queue(

@@ -237,6 +237,31 @@ pub fn attendance_delete(db: State<'_, Database>, attendance_id: String) -> Resu
     crate::attendance::delete(&db.path(), &attendance_id)
 }
 #[tauri::command]
+pub fn initialize_first_launch(db: State<'_, Database>) -> Result<LoginResponse, String> {
+    if db.has_users().map_err(|e| e.to_string())? {
+        return Err("Initial setup has already been completed.".into());
+    }
+    clear_session()?;
+    let id = "first-launch".to_string();
+    let username = "HR Admin".to_string();
+    let role = "hr_admin".to_string();
+    let employee_id = None;
+    let must_change_password = false;
+    set_session(AuthSession {
+        id: id.clone(),
+        username: username.clone(),
+        role: role.clone(),
+        employee_id,
+    })?;
+    Ok(LoginResponse {
+        id,
+        username,
+        role: "HR Admin".into(),
+        employee_id: None,
+        must_change_password,
+    })
+}
+#[tauri::command]
 pub fn login(
     db: State<'_, Database>,
     username: String,
@@ -245,8 +270,6 @@ pub fn login(
     clear_session()?;
     let username = username.trim().to_lowercase();
     crate::security::check_login(&db.path(), &username)?;
-    db.prepare_bootstrap_login(&username, &password)
-        .map_err(|_| "Invalid username or password".to_string())?;
     let (id, stored, employee_id, role, must_change_password) =
         db.authenticate_user(&username).map_err(|_| {
             let _ = crate::security::record_failure(&db.path(), &username);
@@ -261,11 +284,8 @@ pub fn login(
         })
         .is_some();
     if !verified {
-        let recovery_ok = username == "admin" && must_change_password && password == "Admin@123";
-        if !recovery_ok {
-            let _ = crate::security::record_failure(&db.path(), &username);
-            return Err("Invalid username or password".into());
-        }
+        let _ = crate::security::record_failure(&db.path(), &username);
+        return Err("Invalid username or password".into());
     }
     let _ = crate::security::record_success(&db.path(), &username);
     let display_role = if role == "hr_admin" {
@@ -298,9 +318,6 @@ pub fn change_password(
     }
     let password = request.new_password.trim();
     validate_password(password)?;
-    if password == "Admin@123" {
-        return Err("Choose a different password.".into());
-    }
     let hash = hash_password(password)?;
     db.change_password(&session.username, &hash, &now())
         .map_err(|_| "Password change failed.".to_string())
