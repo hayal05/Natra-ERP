@@ -8,6 +8,7 @@ mod turso;
 mod autosync;
 mod backup;
 mod security;
+mod employee_hardening;
 
 use tauri::Manager;
 
@@ -18,7 +19,8 @@ pub fn run() {
             let app_data = app.path().app_data_dir().expect("NATRA ERP app data directory unavailable");
             let database = db::Database::open(&app_data).expect("NATRA ERP SQLite initialization failed");
             {
-                let conn = rusqlite::Connection::open(database.path()).expect("NATRA ERP leave database unavailable");
+                let conn = rusqlite::Connection::open(database.path()).expect("NATRA ERP employee database unavailable");
+                employee_hardening::migrate(&conn).expect("NATRA ERP employee hardening migration failed");
                 leave::migrate(&conn).expect("NATRA ERP leave migration failed");
                 payroll::migrate(&conn).expect("NATRA ERP payroll migration failed");
             }
